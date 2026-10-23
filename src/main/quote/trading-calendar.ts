@@ -1,0 +1,80 @@
+/**
+ * 交易日历：判断某天是否为 A 股交易日（含法定节假日与调休补班）。
+ *
+ * 数据来源：国务院年度放假安排（以 NateScarlet/holiday-cn 整理的公开数据为准）。
+ * 2027 年数据官方尚未公布时，未列出的日期按「仅工作日」规则回退。
+ * 用户可在「设置 → 交易日历」中覆盖。
+ */
+import type { TradingCalendarConfig } from '@shared/ipc'
+
+export type { TradingCalendarConfig }
+
+// 默认日历：已内置 2025、2026 真实节假日与调休
+export const DEFAULT_CALENDAR: TradingCalendarConfig = {
+  holidays: [
+    // 2025
+    '2025-01-01',
+    '2025-01-28', '2025-01-29', '2025-01-30', '2025-01-31',
+    '2025-02-01', '2025-02-02', '2025-02-03', '2025-02-04',
+    '2025-04-04', '2025-04-05', '2025-04-06',
+    '2025-05-01', '2025-05-02', '2025-05-03', '2025-05-04', '2025-05-05',
+    '2025-05-31', '2025-06-01', '2025-06-02',
+    '2025-10-01', '2025-10-02', '2025-10-03', '2025-10-04',
+    '2025-10-05', '2025-10-06', '2025-10-07', '2025-10-08',
+    // 2026
+    '2026-01-01', '2026-01-02', '2026-01-03',
+    '2026-02-15', '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19',
+    '2026-02-20', '2026-02-21', '2026-02-22', '2026-02-23',
+    '2026-04-04', '2026-04-05', '2026-04-06',
+    '2026-05-01', '2026-05-02', '2026-05-03', '2026-05-04', '2026-05-05',
+    '2026-06-19', '2026-06-20', '2026-06-21',
+    '2026-09-25', '2026-09-26', '2026-09-27',
+    '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04',
+    '2026-10-05', '2026-10-06', '2026-10-07',
+  ],
+  makeupWorkdays: [
+    // 2025
+    '2025-01-26', '2025-02-08', '2025-04-27', '2025-09-28', '2025-10-11',
+    // 2026
+    '2026-01-04', '2026-02-14', '2026-02-28', '2026-05-09', '2026-09-20', '2026-10-10',
+  ],
+}
+
+function ymd(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+/**
+ * 判断某天是否为交易日。
+ * - 在 holidays 中 → 休市
+ * - 周末且不在 makeupWorkdays 中 → 休市
+ * - 周末但在 makeupWorkdays 中 → 交易（调休补班）
+ * - 工作日且不在 holidays 中 → 交易
+ */
+export function isTradingDay(date: Date, config: TradingCalendarConfig = DEFAULT_CALENDAR): boolean {
+  const key = ymd(date)
+  if (config.holidays.includes(key)) return false
+  const day = date.getDay()
+  if (day === 0 || day === 6) {
+    return config.makeupWorkdays.includes(key)
+  }
+  return true
+}
+
+/**
+ * 判断当前是否为交易时段（交易日 + 上午 9:30-11:30 / 下午 13:00-15:00）。
+ */
+export function isTradingHours(date: Date, config: TradingCalendarConfig = DEFAULT_CALENDAR): boolean {
+  if (!isTradingDay(date, config)) return false
+  const minutes = date.getHours() * 60 + date.getMinutes()
+  return (minutes >= 570 && minutes <= 690) || (minutes >= 780 && minutes <= 900)
+}
+
+/**
+ * 取未来最近的若干休市日（含节假日与调休放假），用于设置页展示。
+ */
+export function upcomingHolidays(config: TradingCalendarConfig = DEFAULT_CALENDAR, limit = 12): string[] {
+  const today = ymd(new Date())
+  return config.holidays.filter((d) => d >= today).slice(0, limit)
+}

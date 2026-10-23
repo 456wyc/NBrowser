@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>牛Browser</title>
+    <script>
+      // 抢先应用主题，避免 React 渲染前白屏闪烁；逻辑与 src/renderer/src/lib/themeMode.ts 保持一致
+      (function () {
+        try {
+          var s = localStorage.getItem('app.theme');
+          var mode =
+            s === 'dark' || s === 'light'
+              ? s
+              : window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark';
+          var r = document.documentElement;
+          r.dataset.theme = mode;
+          r.style.colorScheme = mode;
+          r.style.backgroundColor = mode === 'light' ? '#eff1f5' : '#1e1e2e';
+        } catch (e) {}
+      })();
+    </script>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        background: #f5f5f5;
+      }
+      #root {
+        width: 100vw;
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

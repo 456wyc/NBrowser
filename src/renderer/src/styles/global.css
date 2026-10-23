@@ -1,0 +1,992 @@
+/* 全局样式：设计令牌（CSS 变量）+ 基础重置 + 可复用交互 class
+ *
+ * 思路：颜色 / 圆角 / 阴影等静态值集中在 :root，组件内联样式用 var(--xxx) 引用；
+ * hover / active / focus / disabled 这类状态化样式只能写在 class 里（内联无法表达），
+ * 因此把通用的「图标按钮 / 行 hover / 标签 / 输入框 / 分隔条 / 拖拽手柄」抽成 class。
+ * 取值与 src/renderer/src/theme.ts 保持一致。
+ */
+
+:root {
+  --bg-crust: #11111b;
+  --bg-base: #1e1e2e;
+  --bg-mantle: #181825;
+  --surface0: #313244;
+  --surface1: #45475a;
+  --surface2: #585b70;
+
+  --text: #cdd6f4;
+  --subtext0: #a6adc8;
+  --subtext1: #bac2de;
+  --overlay0: #6c7086;
+  --overlay1: #7f849c;
+
+  --blue: #89b4fa;
+  --blue-bright: #a3c5fb;
+  --mauve: #cba6f7;
+  --green: #a6e3a1;
+  --red: #f38ba8;
+  --yellow: #f9e2af;
+  --peach: #fab387;
+  --teal: #94e2d5;
+  --sky: #89dceb;
+
+  /* 涨跌语义色（A 股红涨绿跌，独立于主题的 --red/--green） */
+  --up: #ef4444;
+  --down: #22c55e;
+
+  /* 主题色 RGB 分量（用于半透明叠加，如 rgba(var(--blue-rgb), 0.15)） */
+  --blue-rgb: 137, 180, 250;
+  --green-rgb: 166, 227, 161;
+  --red-rgb: 243, 139, 168;
+  --yellow-rgb: 249, 226, 175;
+  --up-rgb: 239, 68, 68;
+  --down-rgb: 34, 197, 94;
+
+  --border: #313244;
+  --border-strong: #45475a;
+
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.45);
+
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg-base);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-size: 13px;
+}
+
+code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
+/* ---------- 滚动条 ---------- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface1);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--surface2);
+  background-clip: padding-box;
+}
+
+/* ---------- 图标按钮 ---------- */
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--subtext0);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.icon-btn:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+.icon-btn:active {
+  background: var(--surface1);
+}
+.icon-btn.active {
+  background: rgba(var(--blue-rgb), 0.18);
+  color: var(--blue);
+}
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.icon-btn:disabled:hover {
+  background: transparent;
+  color: var(--subtext0);
+}
+/* 带边框、强调色（如地址栏的 AI 按钮） */
+.icon-btn.bordered {
+  border: 1px solid var(--border-strong);
+}
+.icon-btn.yellow {
+  color: var(--yellow);
+}
+.icon-btn.danger:hover {
+  background: rgba(var(--red-rgb), 0.12);
+  color: var(--red);
+}
+
+/* ---------- 行 hover ---------- */
+.hover-row {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.hover-row:hover {
+  background: var(--surface0);
+}
+.hover-row.active {
+  background: rgba(var(--blue-rgb), 0.12);
+  color: var(--text);
+}
+
+/* ---------- 侧栏小按钮（底部入口） ---------- */
+.side-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--subtext0);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.12s, color 0.12s;
+}
+.side-btn:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+
+/* ---------- 通用 chip（可点击小标签，如分析模板） ---------- */
+.chip {
+  padding: 3px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface0);
+  color: var(--subtext0);
+  cursor: pointer;
+  font-size: 11.5px;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.chip:hover {
+  background: rgba(var(--blue-rgb), 0.16);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.chip:active {
+  background: rgba(var(--blue-rgb), 0.24);
+}
+
+/* 侧栏空间切换按钮（带图标 + 名称，整行可点） */
+.space-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--subtext0);
+  cursor: pointer;
+  font-size: 14px;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+
+/* 空间项 hover 出现的「编辑」小按钮 */
+.space-edit-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 4px;
+  background: var(--surface1);
+  color: var(--subtext0);
+  font-size: 12px;
+  cursor: pointer;
+  transition: opacity 0.12s, color 0.12s;
+}
+.space-btn:hover .space-edit-btn {
+  opacity: 1;
+}
+.space-edit-btn:hover {
+  color: var(--text);
+}
+
+/* 空间编辑器的图标格子 */
+.icon-cell {
+  width: 100%;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.icon-cell:hover {
+  background: var(--surface1);
+}
+.icon-cell.active {
+  background: var(--surface1);
+  outline: 1px solid var(--blue);
+}
+.space-btn:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+.space-btn.active {
+  background: var(--surface0);
+  color: #fff;
+}
+.space-btn .icon {
+  font-size: 18px;
+  width: 24px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* ---------- 标签（标签栏） ---------- */
+.tab {
+  height: 30px;
+  /* Chrome 式收缩：空间不足时所有标签等比压缩（最小 44px），而不是横向溢出挤掉「+」 */
+  min-width: 44px;
+  max-width: 200px;
+  flex: 1 1 160px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  background: var(--surface0);
+  color: var(--subtext0);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.12s, color 0.12s;
+  border: 1px solid transparent;
+}
+.tab:hover {
+  background: var(--surface1);
+  color: var(--text);
+}
+.tab.active {
+  background: var(--surface2);
+  color: #fff;
+  border-color: rgba(var(--blue-rgb), 0.4);
+  /* 空间紧张时活动标签优先保持更宽 */
+  flex-grow: 1.6;
+}
+.tab.dragging {
+  opacity: 0.4;
+}
+.tab.over {
+  outline: 1px solid var(--blue);
+  outline-offset: -1px;
+}
+.tab-close {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+}
+.tab-close:hover {
+  background: rgba(var(--red-rgb), 0.25);
+  color: var(--red);
+}
+
+/* 自绘勾选框：表格行多选等不便用 .switch 的场景，深色主题下与开关视觉一致 */
+input.checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--bg-crust);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.12s, border-color 0.12s;
+}
+input.checkbox:hover {
+  border-color: var(--blue);
+}
+input.checkbox:checked {
+  background: var(--blue);
+  border-color: var(--blue);
+}
+input.checkbox:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 3px;
+  height: 7px;
+  border: solid var(--bg-base);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.checkbox-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--bg-crust);
+  color: var(--bg-base);
+  font-size: 10px;
+  line-height: 1;
+  transition: background 0.12s, border-color 0.12s;
+}
+.checkbox-box.on {
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+/* ---------- 输入框 ---------- */
+.field {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-crust);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.field:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(var(--blue-rgb), 0.22);
+}
+/* 多行输入：与 .field 同一套视觉，但不锁高度（高度由 rows 决定） */
+.textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--bg-crust);
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: inherit;
+  line-height: 1.6;
+  resize: vertical;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.textarea:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(var(--blue-rgb), 0.22);
+}
+.field::placeholder {
+  color: var(--overlay0);
+}
+.field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- 原生控件主题色（勾选框 / 单选框 / 下拉） ---------- */
+input[type='checkbox'],
+input[type='radio'],
+select {
+  accent-color: var(--blue);
+}
+select {
+  cursor: pointer;
+}
+select option {
+  background: var(--bg-mantle);
+  color: var(--text);
+}
+
+/* 多行输入框聚焦态（面板内自定义 textarea 也能得到一致的蓝色光晕） */
+textarea:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(var(--blue-rgb), 0.22);
+  outline: none;
+}
+
+/* ---------- 开关（checkbox 视觉化为 toggle switch） ---------- */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch-track {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--surface1);
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--subtext0);
+  transition: transform 0.15s, background 0.15s;
+}
+.switch input:checked + .switch-track {
+  background: var(--blue);
+}
+.switch input:checked + .switch-track::after {
+  transform: translateX(14px);
+  background: var(--bg-base);
+}
+.switch input:focus-visible + .switch-track {
+  box-shadow: 0 0 0 3px rgba(var(--blue-rgb), 0.22);
+}
+.switch input:disabled + .switch-track {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------- 分隔条 ---------- */
+.divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+/* ---------- 面板 / 底部 头部 ---------- */
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg-mantle);
+}
+.panel-header .spacer {
+  flex: 1;
+}
+.seg {
+  display: flex;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.seg-btn {
+  flex: 1;
+  height: 28px;
+  white-space: nowrap;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--subtext0);
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.seg-btn:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+.seg-btn.active {
+  background: rgba(var(--blue-rgb), 0.18);
+  border-color: var(--blue);
+  color: var(--blue);
+  font-weight: 500;
+}
+
+/* ---------- 笔记 Markdown 预览排版 ---------- */
+.md-preview h1, .md-preview h2, .md-preview h3,
+.md-preview h4, .md-preview h5, .md-preview h6 {
+  margin: 14px 0 8px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+.md-preview h1 { font-size: 20px; }
+.md-preview h2 { font-size: 17px; }
+.md-preview h3 { font-size: 15px; }
+.md-preview h4, .md-preview h5, .md-preview h6 { font-size: 14px; }
+.md-preview h1:first-child, .md-preview h2:first-child, .md-preview p:first-child { margin-top: 0; }
+.md-preview p { margin: 8px 0; }
+.md-preview ul, .md-preview ol { margin: 8px 0; padding-left: 22px; }
+.md-preview li { margin: 3px 0; }
+.md-preview blockquote {
+  margin: 10px 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--blue);
+  background: var(--surface0);
+  border-radius: 0 6px 6px 0;
+  color: var(--subtext0);
+}
+.md-preview code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12.5px;
+  background: var(--surface0);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.md-preview pre {
+  margin: 10px 0;
+  padding: 10px 12px;
+  background: var(--bg-crust);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.md-preview pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.md-preview a { color: var(--blue); }
+.md-preview hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 14px 0;
+}
+
+/* 笔记列表拖拽调宽手柄（悬停高亮提示可拖） */
+.notes-resize-handle {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  transition: background 0.15s;
+}
+.notes-resize-handle:hover {
+  background: rgba(var(--blue-rgb), 0.35);
+}
+
+/* ---------- 拖拽手柄（关键：带可见抓点 + hover/拖拽高亮） ---------- */
+.resize-handle {
+  position: relative;
+  flex-shrink: 0;
+  background: transparent;
+  transition: background 0.15s;
+  touch-action: none;
+  z-index: 5;
+}
+.resize-handle.v {
+  width: 4px;
+  cursor: col-resize;
+  /* 扩大命中区：视觉 4px，可点击 12px，负 margin 抵消不影响布局 */
+  margin-left: -4px;
+  padding-left: 4px;
+  margin-right: -4px;
+  padding-right: 4px;
+}
+.resize-handle.h {
+  height: 4px;
+  cursor: row-resize;
+  margin-top: -4px;
+  padding-top: 4px;
+  margin-bottom: -4px;
+  padding-bottom: 4px;
+}
+/* 抓点（dot） */
+.resize-handle.v::after,
+.resize-handle.h::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  background-image: radial-gradient(circle, var(--overlay0) 1px, transparent 1.6px);
+}
+.resize-handle.v::after {
+  width: 4px;
+  height: 16px;
+  background-size: 4px 6px;
+}
+.resize-handle.h::after {
+  width: 16px;
+  height: 4px;
+  background-size: 6px 4px;
+}
+.resize-handle:hover {
+  background: var(--surface1);
+}
+.resize-handle:hover::after {
+  background-image: radial-gradient(circle, var(--subtext0) 1px, transparent 1.6px);
+}
+.resize-handle.dragging {
+  background: var(--blue);
+}
+.resize-handle.dragging::after {
+  background-image: radial-gradient(circle, #fff 1px, transparent 1.6px);
+}
+
+/* ---------- 无框窗口拖拽区 ----------
+   隐藏原生标题栏后，顶栏空白处可拖动/双击最大化窗口；
+   所有可交互元素必须套 .no-drag，否则点击会被拖拽语义吞掉。 */
+.drag-region {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* ---------- 顶栏文字菜单（空间切换，VSCode 菜单栏样式） ---------- */
+.menu-btn {
+  height: 36px;
+  padding: 0 14px;
+  border: none;
+  background: transparent;
+  color: var(--subtext0);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, background 0.15s;
+}
+.menu-btn:hover {
+  color: var(--text);
+  background: var(--surface0);
+}
+.menu-btn.active {
+  color: var(--text);
+  background: var(--surface1);
+  font-weight: 500;
+}
+
+/* ---------- 空间右键菜单项 ---------- */
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.menu-item:hover {
+  background: var(--surface1);
+}
+.menu-item.danger {
+  color: var(--red);
+}
+.menu-item.danger:hover {
+  background: rgba(243, 139, 168, 0.15);
+}
+
+/* ---------- 空态 ---------- */
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px;
+  text-align: center;
+  color: var(--overlay0);
+}
+.empty-state .icon {
+  font-size: 32px;
+  opacity: 0.7;
+}
+.empty-state .title {
+  font-size: 14px;
+  color: var(--subtext0);
+}
+.empty-state .desc {
+  font-size: 12px;
+  line-height: 1.6;
+  max-width: 320px;
+}
+.empty-state.error .title {
+  color: var(--red);
+}
+
+/* ---------- 通用卡片/区块标题 ---------- */
+.section-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--overlay0);
+  padding: 0 12px;
+}
+
+/* ---------- 通用按钮 ----------
+   .btn-primary / .btn-danger / .btn-ghost 是变体，单独使用（不带 .btn）也必须
+   拿到完整的基础样式，所以基础声明用选择器组，变体只写差异。 */
+.btn,
+.btn-primary,
+.btn-danger,
+.btn-ghost {
+  height: 30px;
+  padding: 0 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--subtext0);
+  cursor: pointer;
+  font-size: 13px;
+  /* 空间不足时不被 flex 压缩、文字不折行（宁可让兄弟内容收缩） */
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.btn:hover:not(:disabled),
+.btn-ghost:hover:not(:disabled) {
+  background: var(--surface0);
+  color: var(--text);
+}
+.btn:disabled,
+.btn-primary:disabled,
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-primary {
+  border: none;
+  background: var(--blue);
+  color: var(--bg-base);
+  font-weight: 500;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--blue-bright);
+  color: var(--bg-base);
+}
+.btn-ghost {
+  border-color: transparent;
+}
+.btn-danger {
+  color: var(--red);
+}
+.btn-danger:hover:not(:disabled) {
+  background: rgba(var(--red-rgb), 0.14);
+  border-color: var(--red);
+  color: var(--red);
+}
+
+/* ---------- 提示条（成功/失败） ---------- */
+.toast {
+  display: inline-block;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  color: var(--green);
+  background: rgba(var(--green-rgb), 0.12);
+  border: 1px solid rgba(var(--green-rgb), 0.3);
+}
+.toast-error {
+  display: inline-block;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: var(--r-sm);
+  color: var(--red);
+  background: rgba(var(--red-rgb), 0.12);
+  border: 1px solid rgba(var(--red-rgb), 0.3);
+}
+
+/* ---------- 下划线式标签（导航首页） ---------- */
+.nav-tab {
+  padding: 10px 20px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--overlay0);
+  cursor: pointer;
+  font-size: 14px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.nav-tab:hover {
+  color: var(--text);
+}
+.nav-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--blue);
+  font-weight: 500;
+}
+
+/* ---------- 卡片（带 hover 微抬高） ---------- */
+.card {
+  background: var(--surface0);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  transition: background 0.15s, transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.card:hover {
+  background: var(--surface1);
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ---------- 文字辅助类 ---------- */
+.muted {
+  color: var(--overlay0);
+}
+.text-sub {
+  color: var(--subtext0);
+}
+
+/* ---------- 标签（笔记筛选 / 编辑） ---------- */
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--subtext0);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.tag-chip:hover {
+  border-color: var(--blue);
+  color: var(--text);
+}
+.tag-chip.active {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: #fff;
+}
+.tag-mini {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--blue);
+  background: rgba(var(--blue-rgb), 0.12);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* ===================== 浅色主题（Catppuccin Latte） =====================
+ * 仅覆盖颜色 / 阴影相关令牌；圆角、字体、涨跌语义色（--up/--down）保持原样。
+ * 默认（无 data-theme 或 data-theme="dark"）沿用上方 :root 的深色值。
+ */
+[data-theme='light'] {
+  --bg-crust: #dce0e8;
+  --bg-base: #eff1f5;
+  --bg-mantle: #e6e9ef;
+  --surface0: #ccd0da;
+  --surface1: #bcc0cc;
+  --surface2: #a6adc8;
+
+  --text: #4c4f69;
+  --subtext0: #6c6f85;
+  --subtext1: #5c5f77;
+  --overlay0: #9ca0b0;
+  --overlay1: #8c8fa1;
+
+  --blue: #1e66f5;
+  --blue-bright: #3268d6;
+  --mauve: #8839ef;
+  --green: #40a02b;
+  --red: #d20f39;
+  --yellow: #df8e1d;
+  --peach: #fe640b;
+  --teal: #179299;
+  --sky: #04a5e5;
+
+  /* 半透明叠加用的 RGB 分量（同步替换深色值） */
+  --blue-rgb: 30, 102, 245;
+  --green-rgb: 64, 160, 43;
+  --red-rgb: 210, 15, 57;
+  --yellow-rgb: 223, 142, 29;
+  /* --up-rgb / --down-rgb 不变（A 股红涨绿跌语义） */
+
+  --border: #ccd0da;
+  --border-strong: #bcc0cc;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.16);
+}
+.tag-remove {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  margin-left: 2px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.tag-remove:hover {
+  opacity: 1;
+}
+
+/* ---------- 自选股列表行（hover 高亮） ---------- */
+.wl-row {
+  transition: background 0.12s;
+}
+.wl-row:hover {
+  background: var(--surface0);
+}
