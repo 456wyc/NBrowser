@@ -9,7 +9,8 @@ import type { AgentCapabilitiesConfig, McpServerConfig } from './agent-capabilit
 // ---------- 通道名称 ----------
 export const IPC_CHANNELS = {
   PING: 'app:ping',
-  APP_FOCUS_ADDRESS: 'app:focusAddress', // 主进程 -> 渲染进程：聚焦地址栏
+  APP_FOCUS_ADDRESS: 'app:focusAddress',
+  APP_SHOW_MENU: 'app:showMenu', // 在指定坐标弹出应用菜单的某个子菜单（主窗口自绘顶栏的「标签/助手/视图/帮助」） // 主进程 -> 渲染进程：聚焦地址栏
   ZOOM_CHANGED: 'app:zoomChanged', // 主进程 -> 渲染进程：网页缩放比例变化
   APP_ZOOM: 'app:zoom', // 渲染进程 -> 主进程：地址栏缩放控件（放大/缩小/重置当前内容）
 
@@ -65,6 +66,21 @@ export const IPC_CHANNELS = {
   WINDOW_SET_WEB_AREA_BOUNDS: 'window:setWebAreaBounds', // 渲染进程上报实测网页区矩形
   WINDOW_TOGGLE_FULLSCREEN: 'window:toggleFullscreen',
 
+  // Windows - 独立窗口（标签页弹出为独立 OS 窗口，多屏各看各的）
+  TABS_POPOUT: 'tabs:popout', // 把标签页弹出为独立窗口
+  WINDOWS_GET_ALL: 'windows:getAll', // 已弹出的独立窗口列表
+  WINDOWS_FOCUS: 'windows:focus', // 聚焦（唤醒）某个独立窗口
+  WINDOWS_CLOSE: 'windows:close', // 收回：关掉独立窗口，标签回到主窗口标签栏
+  WINDOWS_CLOSE_ALL: 'windows:closeAll', // 全部收回
+  WINDOWS_SET_BOUNDS: 'windows:setBounds', // 独立窗口外壳上报网页区矩形（带 windowId）
+  WINDOWS_UPDATED: 'windows:updated', // 主进程主动推送：独立窗口列表变化
+  WINDOWS_GET_TABS: 'windows:getTabs', // 某个独立窗口内的标签列表
+  WINDOWS_NEW_TAB: 'windows:newTab', // 在指定独立窗口内新开一个标签
+  WINDOWS_SWITCH_TAB: 'windows:switchTab', // 窗口内切换标签
+  WINDOWS_CLOSE_TAB: 'windows:closeTab', // 关掉窗口内某个标签（最后一个则收回整个窗口）
+  WINDOWS_RETURN_TAB: 'windows:returnTab', // 把窗口内某一页单独送回主窗口标签栏
+  WINDOWS_TABS_UPDATED: 'windows:tabsUpdated', // 推送给独立窗口外壳：窗口内标签变化
+
   // App log - 运行日志（底部面板「日志」页）
   APP_LOG_TAIL: 'app:log:tail',
   APP_LOG_OPEN_DIR: 'app:log:openDir',
@@ -98,6 +114,27 @@ export const IPC_CHANNELS = {
   AGENT_SET_CAPABILITIES: 'agent:setCapabilities',
   AGENT_TEST_MCP: 'agent:testMcp',
 
+  // AI 助手 Copilot（Cmd/Ctrl+K 全局召唤，多轮会话 + 内部数据工具）
+  AGENT_CHAT: 'agent:chat',
+  AGENT_CHAT_STOP: 'agent:chatStop',
+  AGENT_COPILOT_OPEN: 'agent:copilotOpen', // 主进程主动推送（菜单快捷键 Cmd/Ctrl+K）
+  AGENT_CONFIRM_ACTION: 'agent:confirmAction', // 渲染进程 → 主进程：行动工具写操作的用户确认结果
+  AGENT_SESSIONS_LIST: 'agent:sessionsList',
+  AGENT_SESSION_GET: 'agent:sessionGet',
+  AGENT_SESSION_DELETE: 'agent:sessionDelete',
+
+  // 页面智能体：大模型自动控制当前打开的网页（感知 → 决策 → 执行 闭环）
+  PAGE_AGENT_START: 'pageAgent:start',
+  PAGE_AGENT_STOP: 'pageAgent:stop',
+  PAGE_AGENT_EVENT: 'pageAgent:event', // 主进程主动推送（步骤流）
+
+  // AI 桌宠（牛来）：桌面浮窗，可对话；后续用于行情播报提示
+  PET_TOGGLE: 'pet:toggle',
+  PET_SET_SIZE: 'pet:setSize', // 桌宠开合聊天面板时调整浮窗尺寸
+  PET_NOTIFY: 'pet:notify', // 主进程主动推送：让桌宠弹提示气泡（行情监控等）
+  PET_GET_CONFIG: 'pet:getConfig', // 桌宠名称 + 系统提示词
+  PET_SET_CONFIG: 'pet:setConfig',
+
   // 研究报告落库
   RESEARCH_LIST: 'research:list',
   RESEARCH_GET: 'research:get',
@@ -109,6 +146,10 @@ export const IPC_CHANNELS = {
   QUOTES_REFRESH: 'quotes:refresh',
   QUOTES_UPDATED: 'quotes:updated', // 主进程主动推送
   QUOTE_HISTORY_GET: 'quoteHistory:get',
+  // 行情数据源配置与测试
+  QUOTE_GET_SOURCE: 'quote:getSource',
+  QUOTE_SET_SOURCE: 'quote:setSource',
+  QUOTE_TEST_SOURCE: 'quote:testSource',
 
   // PageVisits - 浏览轨迹
   PAGE_VISITS_GET_SUMMARY: 'pageVisits:getSummary',
@@ -128,6 +169,8 @@ export const IPC_CHANNELS = {
   SETTINGS_SET_SEARCH_ENGINE: 'settings:setSearchEngine',
   SETTINGS_GET_QUOTE_INTERVAL: 'settings:getQuoteInterval',
   SETTINGS_SET_QUOTE_INTERVAL: 'settings:setQuoteInterval',
+  SETTINGS_GET_SESSION_RESTORE: 'settings:getSessionRestore',
+  SETTINGS_SET_SESSION_RESTORE: 'settings:setSessionRestore',
 
   // Trades - 交易记录
   TRADES_GET_ALL: 'trades:getAll',
@@ -136,6 +179,8 @@ export const IPC_CHANNELS = {
   TRADES_DELETE: 'trades:delete',
   TRADES_IMPORT_PARSE: 'trades:importParse',
   TRADES_IMPORT_BULK: 'trades:importBulk',
+  TRADES_PARSE_NATURAL: 'trades:parseNatural',
+  TRADES_GET_CONTEXT: 'trades:getContext',
 
   // Reviews - 复盘笔记
   REVIEWS_SAVE: 'reviews:save',
@@ -202,6 +247,26 @@ export interface Tab {
   canGoBack: boolean
   canGoForward: boolean
   symbol: string | null // 从 URL 识别出的股票代码，识别不到为 null
+  /** 是否已弹出为独立窗口（标签仍在标签栏，点击可唤醒那个窗口） */
+  poppedOut?: boolean
+}
+
+/** 已弹出的独立窗口（多屏时每个窗口可显示不同页面；一个窗口可承载多个标签） */
+export interface PopoutWindowInfo {
+  windowId: string
+  /** 窗口内活动标签的标题 / 地址 */
+  title: string
+  url: string
+  /** 窗口内共有几个标签（外壳据此显示标签栏） */
+  tabCount: number
+}
+
+/** 独立窗口内的一个标签 */
+export interface PopoutTabInfo {
+  tabId: string
+  title: string
+  url: string
+  isActive: boolean
 }
 
 export interface Bookmark {
@@ -353,6 +418,39 @@ export interface QuotesUpdate {
   quotes: Quote[]
   timestamp: number
   error: string | null
+  /** 当前实际使用的数据源名（降级时为 eastmoney） */
+  source: string
+  /** 是否已从用户选择的数据源自动降级 */
+  degraded: boolean
+}
+
+// ---------- 行情数据源配置 ----------
+export interface QuoteSourceInfo {
+  /** 用户在设置里选的数据源 */
+  provider: string
+  custom?: {
+    quoteUrl: string
+    klineUrl?: string
+    quoteArrayPath?: string
+    fieldMap: Record<string, string>
+    headers?: Record<string, string>
+  }
+  /** 当前实际生效的数据源（连续失败自动降级后与 provider 不同） */
+  active?: string
+  /** 是否处于降级状态 */
+  degraded?: boolean
+}
+export interface QuoteSourceTestRequest {
+  provider: string
+  custom?: QuoteSourceInfo['custom']
+}
+export interface QuoteSourceTestResponse {
+  ok: boolean
+  /** 成功时的样例（名称/现价/涨跌幅） */
+  sample?: { symbol: string; name: string; price: number; changePercent: number }
+  error?: string
+  /** 耗时（毫秒） */
+  latencyMs: number
 }
 
 // 浏览轨迹
@@ -469,6 +567,18 @@ export interface AiHistoryItem {
 
 // app:focusAddress - 主进程菜单触发，通知渲染进程聚焦地址栏（无载荷）
 export interface AppFocusAddressRequest {}
+
+// app:showMenu - 在指定坐标弹出应用菜单的子菜单（主窗口自绘顶栏的菜单按钮）
+export interface AppShowMenuRequest {
+  /** 顶层菜单 id：menu-tabs / menu-copilot / menu-view / menu-help */
+  menuId: string
+  /** 相对窗口内容区的坐标（渲染进程用按钮矩形算出来） */
+  x: number
+  y: number
+}
+export interface AppShowMenuResponse {
+  success: boolean
+}
 
 // app:log:tail - 读取当天运行日志的末尾若干行（底部面板「日志」页）
 export interface AppLogTailRequest {
@@ -887,6 +997,99 @@ export interface WindowToggleFullscreenResponse {
   fullscreen: boolean
 }
 
+// tabs:popout - 把标签页弹出为独立窗口
+export interface TabsPopoutRequest {
+  tabId: string
+}
+export interface TabsPopoutResponse {
+  success: boolean
+  windowId?: string
+  error?: string
+}
+
+// windows:getAll - 已弹出的独立窗口
+export interface WindowsGetAllRequest {}
+export interface WindowsGetAllResponse {
+  windows: PopoutWindowInfo[]
+}
+
+// windows:focus - 唤醒某个独立窗口
+export interface WindowsFocusRequest {
+  tabId: string
+}
+export interface WindowsFocusResponse {
+  success: boolean
+}
+
+// windows:close - 收回某个独立窗口（标签回到主窗口）
+export interface WindowsCloseRequest {
+  tabId: string
+}
+export interface WindowsCloseResponse {
+  success: boolean
+}
+
+// windows:closeAll - 收回全部独立窗口
+export interface WindowsCloseAllRequest {}
+export interface WindowsCloseAllResponse {
+  closed: number
+}
+
+// windows:setBounds - 独立窗口外壳上报网页区矩形（比主窗口多一个 windowId）
+export interface WindowsSetBoundsRequest {
+  windowId: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+export interface WindowsSetBoundsResponse {
+  success: boolean
+}
+
+// windows:getTabs - 某个独立窗口内的标签列表
+export interface WindowsGetTabsRequest {
+  windowId: string
+}
+export interface WindowsGetTabsResponse {
+  windowId: string
+  tabs: PopoutTabInfo[]
+  activeTabId: string
+}
+
+// windows:newTab - 在指定独立窗口内新开标签
+export interface WindowsNewTabRequest {
+  windowId: string
+  url?: string
+}
+export interface WindowsNewTabResponse {
+  tabId: string
+}
+
+// windows:switchTab - 窗口内切换标签
+export interface WindowsSwitchTabRequest {
+  tabId: string
+}
+export interface WindowsSwitchTabResponse {
+  success: boolean
+}
+
+// windows:closeTab - 关掉窗口内某个标签
+export interface WindowsCloseTabRequest {
+  tabId: string
+}
+export interface WindowsCloseTabResponse {
+  success: boolean
+}
+
+// windows:returnTab - 把独立窗口里的某一页送回主窗口标签栏（窗口保留其余页）
+export interface WindowsReturnTabRequest {
+  tabId: string
+}
+export interface WindowsReturnTabResponse {
+  success: boolean
+}
+
 // watchlist:getAll
 export interface WatchlistGetAllRequest {}
 export interface WatchlistGetAllResponse {
@@ -988,6 +1191,10 @@ export interface QuotesGetLatestResponse {
   quotes: Quote[]
   timestamp: number
   error: string | null
+  /** 当前实际使用的数据源名（降级时为 eastmoney） */
+  source: string
+  /** 是否已从用户选择的数据源自动降级（界面据此提示「数据可能延迟」） */
+  degraded: boolean
 }
 
 // 单条行情历史快照
@@ -1121,6 +1328,19 @@ export interface SettingsGetQuoteIntervalResponse extends QuoteIntervalConfig {}
 export interface SettingsSetQuoteIntervalRequest extends Partial<QuoteIntervalConfig> {}
 export interface SettingsSetQuoteIntervalResponse extends QuoteIntervalConfig {}
 
+// settings:getSessionRestore - 启动时是否恢复上次的标签页与独立窗口
+export interface SettingsGetSessionRestoreRequest {}
+export interface SettingsGetSessionRestoreResponse {
+  enabled: boolean
+}
+// settings:setSessionRestore
+export interface SettingsSetSessionRestoreRequest {
+  enabled: boolean
+}
+export interface SettingsSetSessionRestoreResponse {
+  success: boolean
+}
+
 // settings:getTradingCalendar
 /** 交易日历配置：休市日与周末补班交易日（YYYY-MM-DD） */
 export interface TradingCalendarConfig {
@@ -1214,11 +1434,42 @@ export interface TradesImportParseResponse {
 // trades:importBulk —— 批量写入解析后的成交（按唯一约束自动去重）
 export interface TradesImportBulkRequest {
   trades: ParsedTrade[]
+  /** 来源标记：broker_import=交割单导入（默认）/ manual=自然语言录入 */
+  source?: 'manual' | 'broker_import'
 }
 export interface TradesImportBulkResponse {
   inserted: number
   skipped: number
   errors: string[]
+}
+// trades:parseNatural —— 自然语言录入：大模型把大白话解析为成交记录（仍需用户预览确认）
+export interface TradesParseNaturalRequest {
+  text: string
+}
+export interface TradesParseNaturalResponse {
+  trades: ParsedTrade[]
+  warnings: string[]
+}
+// trades:getContext —— 复盘闭环：成交前 N 天同股票的研究记录（浏览轨迹 + AI 分析）
+export interface TradesGetContextRequest {
+  symbol: string
+  tradedAt: number
+  /** 回溯小时数（成交前），默认 72 */
+  hours?: number
+}
+export interface TradesGetContextResponse {
+  visits: PageVisit[]
+  analyses: Array<{
+    id: number
+    url: string
+    page_type: string
+    created_at: number
+    summary: string
+  }>
+  /** 窗口内总研究时长（毫秒） */
+  totalResearchMs: number
+  windowFrom: number
+  windowTo: number
 }
 
 // web:getLinks —— 采集当前页面全部链接
@@ -1236,11 +1487,14 @@ export interface WebGetLinksResponse {
 }
 // ai:analyzeUrl —— 无头加载某个 URL 并分析（如右键「用 AI 分析此链接」）
 // agent:run / agent:stream —— LangChain 深度研究代理
+// agent:chat —— AI 助手 Copilot（多轮会话，复用 agent:stream 通道下发事件）
 export type AgentMode = 'research' | 'deepen'
 export type AgentEvent =
   | { type: 'thought'; text: string }
+  | { type: 'delta'; text: string } // Copilot 回复的增量文本（token 级流式）
   | { type: 'tool_call'; name: string; args: unknown }
   | { type: 'tool_result'; name: string; result: string }
+  | { type: 'action_confirm'; requestId: string; tool: string; summary: string } // 行动工具请求用户确认
   | { type: 'done'; report: string }
   | { type: 'error'; message: string }
 export interface AgentRunRequest {
@@ -1253,6 +1507,140 @@ export interface AgentRunResponse {
 }
 export interface AgentStopRequest {
   reason?: string
+}
+
+// ----- AI 助手 Copilot（多轮会话）-----
+export interface AgentConfirmActionRequest {
+  requestId: string
+  approved: boolean
+}
+export interface AgentConfirmActionResponse {
+  ok: boolean
+}
+export interface AgentChatRequest {
+  /** 会话 ID；缺省时新建会话 */
+  sessionId?: number
+  message: string
+  /** 用户当前浏览的页面 URL（作为上下文提示，不强制使用） */
+  currentUrl?: string
+  /**
+   * 身份提示词（人设）。不为空时会被拼到系统提示词最前面，
+   * 让助手知道自己是谁（桌宠「牛来」用它带上名字与性格设定）。
+   */
+  persona?: string
+}
+export interface AgentChatResponse {
+  ok: boolean
+  sessionId: number
+}
+export interface AgentSessionsListResponse {
+  sessions: Array<{
+    id: number
+    title: string
+    created_at: number
+    updated_at: number
+    messageCount: number
+    preview: string
+  }>
+}
+export interface AgentSessionGetResponse {
+  session: {
+    id: number
+    title: string
+    created_at: number
+    updated_at: number
+    messages: Array<{
+      role: 'system' | 'user' | 'assistant' | 'tool'
+      content: string
+      tool_calls?: { id: string; name: string; arguments: string }[]
+      tool_call_id?: string
+      name?: string
+    }>
+  } | null
+}
+export interface AgentSessionDeleteRequest {
+  sessionId: number
+}
+export interface AgentSessionDeleteResponse {
+  success: boolean
+}
+
+// Page Agent - 大模型控制当前打开的网页（感知 → 决策 → 执行 闭环）
+export interface PageAgentStartRequest {
+  goal: string
+  /** 不传则用活动标签 */
+  tabId?: string
+  /** 最大步数，默认 10 */
+  maxSteps?: number
+}
+export interface PageAgentStartResponse {
+  started: boolean
+}
+export interface PageAgentStopRequest {}
+export interface PageAgentStopResponse {
+  stopped: boolean
+}
+export type PageAgentEventType = 'perceive' | 'action' | 'done' | 'error'
+export interface PageAgentEvent {
+  type: PageAgentEventType
+  step?: number
+  /** perceive：本次可见交互元素数量 */
+  elementsCount?: number
+  /** action：动作类型 click/type/scroll/navigate/done */
+  action?: string
+  /** action：目标元素编号 */
+  target?: string
+  /** action：模型这一步的思考 */
+  thought?: string
+  /** action：执行结果描述 */
+  result?: string
+  /** done：完成总结 */
+  answer?: string
+  /** done：结束时页面 URL */
+  finalUrl?: string
+  /** error：错误信息 */
+  message?: string
+}
+
+// AI 桌宠（牛来）—— 桌面浮窗助手（对话 + 后续行情播报）
+/** 桌宠可配置项：名字与系统提示词（人设） */
+export interface PetConfig {
+  name: string
+  systemPrompt: string
+}
+export interface PetGetConfigRequest {}
+export interface PetGetConfigResponse {
+  config: PetConfig
+}
+export interface PetSetConfigRequest {
+  name?: string
+  systemPrompt?: string
+  /** true：把系统提示词恢复为内置默认人设（忽略本次传入的 systemPrompt） */
+  restoreDefault?: boolean
+}
+export interface PetSetConfigResponse {
+  config: PetConfig
+}
+export interface PetToggleRequest {
+  /** 不传则按当前状态切换显隐 */
+  visible?: boolean
+}
+export interface PetToggleResponse {
+  visible: boolean
+}
+export interface PetSetSizeRequest {
+  width: number
+  height: number
+}
+export interface PetSetSizeResponse {
+  ok: boolean
+}
+export interface PetNotifyPayload {
+  text: string
+  /** alert：行情异动等需要强调的提示 */
+  level?: 'info' | 'alert'
+  /** 自动消失时间（毫秒），默认 6000 */
+  durationMs?: number
 }
 
 // research:list / research:get / research:delete —— 研究报告
@@ -1510,6 +1898,7 @@ export interface AiGetConfigRequest {}
 export interface AiGetConfigResponse {
   baseUrl: string
   model: string
+  fastModel: string // 轻量模型（模型路由用，空 = 不启用）
   hasApiKey: boolean // 是否已配置 API Key
 }
 
@@ -1518,6 +1907,7 @@ export interface AiSetConfigRequest {
   baseUrl?: string
   apiKey?: string
   model?: string
+  fastModel?: string
 }
 export interface AiSetConfigResponse {
   success: boolean
@@ -1556,6 +1946,10 @@ export type IpcMapping = {
   [IPC_CHANNELS.APP_FOCUS_ADDRESS]: {
     request: AppFocusAddressRequest
     response: void
+  }
+  [IPC_CHANNELS.APP_SHOW_MENU]: {
+    request: AppShowMenuRequest
+    response: AppShowMenuResponse
   }
   [IPC_CHANNELS.APP_LOG_TAIL]: {
     request: AppLogTailRequest
@@ -1737,6 +2131,58 @@ export type IpcMapping = {
     request: WindowToggleFullscreenRequest
     response: WindowToggleFullscreenResponse
   }
+  [IPC_CHANNELS.TABS_POPOUT]: {
+    request: TabsPopoutRequest
+    response: TabsPopoutResponse
+  }
+  [IPC_CHANNELS.WINDOWS_GET_ALL]: {
+    request: WindowsGetAllRequest
+    response: WindowsGetAllResponse
+  }
+  [IPC_CHANNELS.WINDOWS_FOCUS]: {
+    request: WindowsFocusRequest
+    response: WindowsFocusResponse
+  }
+  [IPC_CHANNELS.WINDOWS_CLOSE]: {
+    request: WindowsCloseRequest
+    response: WindowsCloseResponse
+  }
+  [IPC_CHANNELS.WINDOWS_CLOSE_ALL]: {
+    request: WindowsCloseAllRequest
+    response: WindowsCloseAllResponse
+  }
+  [IPC_CHANNELS.WINDOWS_SET_BOUNDS]: {
+    request: WindowsSetBoundsRequest
+    response: WindowsSetBoundsResponse
+  }
+  [IPC_CHANNELS.WINDOWS_GET_TABS]: {
+    request: WindowsGetTabsRequest
+    response: WindowsGetTabsResponse
+  }
+  [IPC_CHANNELS.WINDOWS_NEW_TAB]: {
+    request: WindowsNewTabRequest
+    response: WindowsNewTabResponse
+  }
+  [IPC_CHANNELS.WINDOWS_SWITCH_TAB]: {
+    request: WindowsSwitchTabRequest
+    response: WindowsSwitchTabResponse
+  }
+  [IPC_CHANNELS.WINDOWS_CLOSE_TAB]: {
+    request: WindowsCloseTabRequest
+    response: WindowsCloseTabResponse
+  }
+  [IPC_CHANNELS.WINDOWS_RETURN_TAB]: {
+    request: WindowsReturnTabRequest
+    response: WindowsReturnTabResponse
+  }
+  [IPC_CHANNELS.WINDOWS_UPDATED]: {
+    request: WindowsGetAllResponse // 主进程 -> 渲染进程的推送载荷
+    response: void
+  }
+  [IPC_CHANNELS.WINDOWS_TABS_UPDATED]: {
+    request: WindowsGetTabsResponse // 主进程 -> 独立窗口外壳的推送载荷
+    response: void
+  }
   [IPC_CHANNELS.WATCHLIST_GET_ALL]: {
     request: WatchlistGetAllRequest
     response: WatchlistGetAllResponse
@@ -1796,6 +2242,18 @@ export type IpcMapping = {
   [IPC_CHANNELS.QUOTE_HISTORY_GET]: {
     request: QuoteHistoryGetRequest
     response: QuoteHistoryGetResponse
+  }
+  [IPC_CHANNELS.QUOTE_GET_SOURCE]: {
+    request: Record<string, never>
+    response: QuoteSourceInfo
+  }
+  [IPC_CHANNELS.QUOTE_SET_SOURCE]: {
+    request: QuoteSourceInfo
+    response: { ok: boolean }
+  }
+  [IPC_CHANNELS.QUOTE_TEST_SOURCE]: {
+    request: QuoteSourceTestRequest
+    response: QuoteSourceTestResponse
   }
   [IPC_CHANNELS.PAGE_VISITS_GET_SUMMARY]: {
     request: PageVisitsGetSummaryRequest
@@ -1857,6 +2315,14 @@ export type IpcMapping = {
     request: SettingsSetQuoteIntervalRequest
     response: SettingsSetQuoteIntervalResponse
   }
+  [IPC_CHANNELS.SETTINGS_GET_SESSION_RESTORE]: {
+    request: SettingsGetSessionRestoreRequest
+    response: SettingsGetSessionRestoreResponse
+  }
+  [IPC_CHANNELS.SETTINGS_SET_SESSION_RESTORE]: {
+    request: SettingsSetSessionRestoreRequest
+    response: SettingsSetSessionRestoreResponse
+  }
   [IPC_CHANNELS.TRADES_GET_ALL]: {
     request: TradesGetAllRequest
     response: TradesGetAllResponse
@@ -1880,6 +2346,14 @@ export type IpcMapping = {
   [IPC_CHANNELS.TRADES_IMPORT_BULK]: {
     request: TradesImportBulkRequest
     response: TradesImportBulkResponse
+  }
+  [IPC_CHANNELS.TRADES_PARSE_NATURAL]: {
+    request: TradesParseNaturalRequest
+    response: TradesParseNaturalResponse
+  }
+  [IPC_CHANNELS.TRADES_GET_CONTEXT]: {
+    request: TradesGetContextRequest
+    response: TradesGetContextResponse
   }
   [IPC_CHANNELS.REVIEWS_SAVE]: {
     request: ReviewsSaveRequest
@@ -1953,6 +2427,34 @@ export type IpcMapping = {
     request: AgentStopRequest
     response: void
   }
+  [IPC_CHANNELS.AGENT_CHAT]: {
+    request: AgentChatRequest
+    response: AgentChatResponse
+  }
+  [IPC_CHANNELS.AGENT_CHAT_STOP]: {
+    request: AgentStopRequest
+    response: void
+  }
+  [IPC_CHANNELS.AGENT_SESSIONS_LIST]: {
+    request: Record<string, never>
+    response: AgentSessionsListResponse
+  }
+  [IPC_CHANNELS.AGENT_SESSION_GET]: {
+    request: { sessionId: number }
+    response: AgentSessionGetResponse
+  }
+  [IPC_CHANNELS.AGENT_SESSION_DELETE]: {
+    request: AgentSessionDeleteRequest
+    response: AgentSessionDeleteResponse
+  }
+  [IPC_CHANNELS.AGENT_COPILOT_OPEN]: {
+    request: void
+    response: void
+  }
+  [IPC_CHANNELS.AGENT_CONFIRM_ACTION]: {
+    request: AgentConfirmActionRequest
+    response: AgentConfirmActionResponse
+  }
   [IPC_CHANNELS.RESEARCH_LIST]: {
     request: ResearchListRequest
     response: ResearchListResponse
@@ -2024,6 +2526,38 @@ export type IpcMapping = {
   [IPC_CHANNELS.SHELL_OPEN]: {
     request: ShellOpenRequest
     response: ShellOpenResponse
+  },
+  [IPC_CHANNELS.PAGE_AGENT_START]: {
+    request: PageAgentStartRequest
+    response: PageAgentStartResponse
+  },
+  [IPC_CHANNELS.PAGE_AGENT_STOP]: {
+    request: PageAgentStopRequest
+    response: PageAgentStopResponse
+  },
+  [IPC_CHANNELS.PAGE_AGENT_EVENT]: {
+    request: PageAgentEvent
+    response: void
+  },
+  [IPC_CHANNELS.PET_TOGGLE]: {
+    request: PetToggleRequest
+    response: PetToggleResponse
+  },
+  [IPC_CHANNELS.PET_SET_SIZE]: {
+    request: PetSetSizeRequest
+    response: PetSetSizeResponse
+  },
+  [IPC_CHANNELS.PET_NOTIFY]: {
+    request: PetNotifyPayload
+    response: void
+  },
+  [IPC_CHANNELS.PET_GET_CONFIG]: {
+    request: PetGetConfigRequest
+    response: PetGetConfigResponse
+  },
+  [IPC_CHANNELS.PET_SET_CONFIG]: {
+    request: PetSetConfigRequest
+    response: PetSetConfigResponse
   }
 }
 

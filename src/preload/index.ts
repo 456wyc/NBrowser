@@ -8,11 +8,15 @@ import {
   type TabsGetAllResponse,
   type AiAnalysisDonePayload,
   type AgentEvent,
+  type PageAgentEvent,
+  type PetNotifyPayload,
   type StrategySignal,
   type WatchlistUpdateEvent,
   type NotesUpdatedEvent,
   type ThemeUpdatedEvent,
   type ZoomChangedPayload,
+  type WindowsGetAllResponse,
+  type WindowsGetTabsResponse,
 } from '@shared/ipc'
 
 /**
@@ -71,6 +75,18 @@ const api = {
   },
 
   /**
+   * 监听「召唤 AI 助手」指令（由主进程菜单 Cmd/Ctrl+K 触发）
+   * 返回取消监听的函数
+   */
+  onCopilotOpen: (callback: () => void): (() => void) => {
+    const handler = () => callback()
+    ipcRenderer.on(IPC_CHANNELS.AGENT_COPILOT_OPEN, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.AGENT_COPILOT_OPEN, handler)
+    }
+  },
+
+  /**
    * 监听分析结果（右键菜单「整理选中文本」完成后由主进程推送）
    * 返回取消监听的函数
    */
@@ -107,6 +123,30 @@ const api = {
   },
 
   /**
+   * 监听桌宠的提示播报（行情监控 / 策略信号等由主进程推送）
+   * 返回取消监听的函数
+   */
+  onPetNotify: (callback: (payload: PetNotifyPayload) => void): (() => void) => {
+    const handler = (_event: unknown, payload: PetNotifyPayload) => callback(payload)
+    ipcRenderer.on(IPC_CHANNELS.PET_NOTIFY, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.PET_NOTIFY, handler)
+    }
+  },
+
+  /**
+   * 监听页面智能体的步骤流（感知 / 动作 / 完成 / 错误）
+   * 返回取消监听的函数
+   */
+  onPageAgentEvent: (callback: (event: PageAgentEvent) => void): (() => void) => {
+    const handler = (_event: unknown, event: PageAgentEvent) => callback(event)
+    ipcRenderer.on(IPC_CHANNELS.PAGE_AGENT_EVENT, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.PAGE_AGENT_EVENT, handler)
+    }
+  },
+
+  /**
    * 监听自选股变化（任何写操作后由主进程广播最新列表与分组）
    * 返回取消监听的函数
    */
@@ -135,6 +175,34 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.NOTES_UPDATED, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.NOTES_UPDATED, handler)
+    }
+  },
+
+  /**
+   * 监听独立窗口列表变化（弹出 / 收回 / 页面标题变化时由主进程推送）
+   * 返回取消监听的函数
+   */
+  onPopoutWindowsUpdated: (
+    callback: (payload: WindowsGetAllResponse) => void
+  ): (() => void) => {
+    const handler = (_event: unknown, payload: WindowsGetAllResponse) => callback(payload)
+    ipcRenderer.on(IPC_CHANNELS.WINDOWS_UPDATED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.WINDOWS_UPDATED, handler)
+    }
+  },
+
+  /**
+   * 监听「本独立窗口内的标签列表」变化（外壳用；由主进程推到对应窗口）
+   * 返回取消监听的函数
+   */
+  onPopoutTabsUpdated: (
+    callback: (payload: WindowsGetTabsResponse) => void
+  ): (() => void) => {
+    const handler = (_event: unknown, payload: WindowsGetTabsResponse) => callback(payload)
+    ipcRenderer.on(IPC_CHANNELS.WINDOWS_TABS_UPDATED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.WINDOWS_TABS_UPDATED, handler)
     }
   },
 

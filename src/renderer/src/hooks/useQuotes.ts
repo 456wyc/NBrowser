@@ -12,6 +12,9 @@ export function useQuotes() {
   const [timestamp, setTimestamp] = useState<number>(0)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  /** 当前实际生效的数据源与是否处于降级状态（界面据此提示「数据可能延迟」） */
+  const [source, setSource] = useState<string>('')
+  const [degraded, setDegraded] = useState(false)
 
   // 初始加载
   useEffect(() => {
@@ -23,6 +26,8 @@ export function useQuotes() {
         setQuotes(new Map(res.quotes.map((q) => [q.symbol, q])))
         setTimestamp(res.timestamp)
         setError(res.error)
+        setSource(res.source ?? '')
+        setDegraded(Boolean(res.degraded))
       } catch (err) {
         if (!mounted) return
         setError(err instanceof Error ? err.message : String(err))
@@ -41,6 +46,8 @@ export function useQuotes() {
       setQuotes(new Map(update.quotes.map((q) => [q.symbol, q])))
       setTimestamp(update.timestamp)
       setError(update.error)
+      setSource(update.source ?? '')
+      setDegraded(Boolean(update.degraded))
       setLoading(false)
     }
 
@@ -62,6 +69,8 @@ export function useQuotes() {
     timestamp,
     error,
     loading,
+    source,
+    degraded,
     refresh,
   }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { filterSearchLinks } from './deep-agent'
+import { filterSearchLinks } from './tools'
 
 describe('filterSearchLinks', () => {
   it('过滤掉非 http 链接与百度站内链接，并去重', () => {

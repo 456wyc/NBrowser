@@ -181,12 +181,12 @@ export function Sidebar({
           </FooterButton>
         )}
         {onOpenAgent && (
-          <FooterButton onClick={onOpenAgent} title="AI 深度研究">
+          <FooterButton onClick={onOpenAgent} title="AI 研究 → 深度研究（自主联网调研）">
             🕸 深度研究
           </FooterButton>
         )}
         {onOpenResearch && (
-          <FooterButton onClick={onOpenResearch} title="研究报告库">
+          <FooterButton onClick={onOpenResearch} title="AI 研究 → 研究报告库">
             📚 研究报告
           </FooterButton>
         )}

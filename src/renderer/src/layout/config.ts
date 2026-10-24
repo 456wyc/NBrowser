@@ -22,10 +22,14 @@
 // 尺寸常量统一从共享模块取，避免两边各写一份后又分叉
 export { SIDEBAR, PANEL, DOCK, HANDLE_SIZE, WEB_AREA_MIN } from '@shared/layout-metrics'
 
-/** 右侧辅助侧栏的标签（一个面板容器，内部切换内容，不再互相顶掉） */
+/**
+ * 右侧辅助侧栏的标签（一个面板容器，内部切换内容，不再互相顶掉）
+ *
+ * 「AI 分析 / 深度研究 / 研究报告」已合并为一个「🔍 研究」标签：
+ * 三者本质是同一功能（AI 辅助研究）的三种深度，内部按 快览/深挖/深度研究 分档，
+ * 报告库作为该模块的子视图。合并后右侧面板从 9 个标签降为 7 个，降低认知负荷。
+ */
 export type PanelTab =
-  | 'ai'
-  | 'agent'
   | 'research'
   | 'strategy'
   | 'trades'
@@ -34,14 +38,18 @@ export type PanelTab =
   | 'notes'
   | 'settings'
 
+/** 研究模块的深度分档 */
+export type ResearchTier = 'quick' | 'deepen' | 'deep'
+
+/** 研究模块的视图：分档研究 / 报告库 */
+export type ResearchView = 'tiers' | 'reports'
+
 /** 底部面板的标签 */
 export type DockTab = 'visits' | 'logs'
 
 /** 面板标签定义（图标 + 名称，横向滚动，宽度不够时不会挤成一团） */
 export const PANEL_TABS: Array<{ id: PanelTab; icon: string; label: string; title: string }> = [
-  { id: 'ai', icon: '✨', label: '分析', title: 'AI 页面分析' },
-  { id: 'agent', icon: '🕸', label: '研究', title: '深度研究代理' },
-  { id: 'research', icon: '📚', label: '报告', title: '研究报告库' },
+  { id: 'research', icon: '🔍', label: '研究', title: 'AI 研究（快览 / 深挖 / 深度研究）与报告库' },
   { id: 'strategy', icon: '🤖', label: '策略', title: 'AI 量化策略' },
   { id: 'trades', icon: '📝', label: '复盘', title: '交易记录与复盘' },
   { id: 'quoteHistory', icon: '📊', label: '回放', title: '行情回放' },

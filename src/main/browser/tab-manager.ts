@@ -5,6 +5,7 @@ import { join } from 'path'
 import { existsSync } from 'fs'
 import { pathToFileURL } from 'url'
 import type { Tab, SpaceId } from '@shared/ipc'
+import type { SessionTab } from '@shared/session-restore'
 import { getSpacePartition } from './space-manager'
 import { extractStockFromUrl } from '../stock-extractor'
 import { toNavigableUrl } from '@shared/url'
@@ -16,11 +17,20 @@ export interface TabInternal {
   title: string
   url: string
   isActive: boolean
+  /** 已弹出为独立窗口：视图挂在另一个 BrowserWindow 上，主窗口不再渲染它 */
+  poppedOut: boolean
 }
 
 export interface TabManagerHooks {
   onTabCreated?: (tabId: string, webContents: WebContents, spaceId: SpaceId) => void
+  /** 标签销毁前（WebContents 还活着）：给调用方留出「先关掉它的独立窗口」的机会 */
+  onBeforeTabClosed?: (tabId: string) => void
   onTabClosed?: (tabId: string) => void
+  /**
+   * 已弹出的标签里发生了「开新页」（window.open / target=_blank）：
+   * 新标签要加到**同一个独立窗口**里（而不是塞回主窗口、也不是再弹一个新 OS 窗口）
+   */
+  onPopoutNewTab?: (sourceTabId: string, newTabId: string) => void
   // 标签列表发生变化（标题/URL/增删/切换），用于向渲染进程推送最新状态
   onTabsChanged?: (spaceId: SpaceId) => void
 }
@@ -61,9 +71,12 @@ export class TabManager {
 
   /**
    * 创建新标签
+   * @param id 指定标签 id（会话恢复时复用上次的 id，独立窗口的归属才对得上）
    */
-  createTab(url?: string, active = true): Tab {
-    const id = randomUUID()
+  createTab(url?: string, active = true, forcedId?: string): Tab {
+    // 会话恢复会传入上次的 id；万一撞上已存在的 id 就退回随机，绝不覆盖
+    const wanted = forcedId && forcedId.trim() ? forcedId.trim() : randomUUID()
+    const id = this.tabs.has(wanted) ? randomUUID() : wanted
     const partition = getSpacePartition(this.spaceId)
 
     const view = new WebContentsView({
@@ -83,9 +96,14 @@ export class TabManager {
 
     // 链接点击（target="_blank" / window.open）统一在本应用内以标签打开，
     // 而不是 Electron 默认弹出原生窗口。后台打开（disposition=background-tab）保持当前标签。
+    // 但已弹出为独立窗口的标签例外：从它里面开出的新页要开成「新的独立窗口」，
+    // 否则用户在独立窗口里点链接，页面会跑回主窗口。
     view.webContents.setWindowOpenHandler(({ url: popupUrl, disposition }) => {
       const openActive = disposition !== 'background-tab'
-      this.createTab(popupUrl, openActive)
+      const newTab = this.createTab(popupUrl, openActive && !tabInternal.poppedOut)
+      if (tabInternal.poppedOut) {
+        this.hooks.onPopoutNewTab?.(tabInternal.id, newTab.id)
+      }
       return { action: 'deny' }
     })
 
@@ -96,6 +114,7 @@ export class TabManager {
       title: initialUrl,
       url: initialUrl,
       isActive: false,
+      poppedOut: false,
     }
 
     // 监听标题和 URL 变化
@@ -157,6 +176,10 @@ export class TabManager {
     if (this.mainWindow.contentView.children.includes(tab.view)) {
       this.mainWindow.contentView.removeChildView(tab.view)
     }
+    // 若已弹出为独立窗口，先把那个窗口收掉（视图还活着，能安全摘下来）
+    if (this.hooks.onBeforeTabClosed) {
+      this.hooks.onBeforeTabClosed(tabId)
+    }
     // 销毁 WebContents
     const wc = tab.view.webContents
     if (!wc.isDestroyed()) {
@@ -190,6 +213,8 @@ export class TabManager {
   switchTab(tabId: string): boolean {
     const tab = this.tabs.get(tabId)
     if (!tab) return false
+    // 已弹出为独立窗口的标签不在主窗口里渲染：点击它只是唤醒那个窗口（见渲染层）
+    if (tab.poppedOut) return true
 
     // 隐藏当前活动标签
     if (this.activeTabId && this.activeTabId !== tabId) {
@@ -256,6 +281,112 @@ export class TabManager {
   }
 
   /**
+   * 该标签是否存在于本空间
+   */
+  hasTab(tabId: string): boolean {
+    return this.tabs.has(tabId)
+  }
+
+  /** 本空间是否一个标签都没有（决定要不要兜底新建导航页） */
+  hasAnyTab(): boolean {
+    return this.tabs.size > 0
+  }
+
+  /**
+   * 供会话存档快照（按当前顺序，顺序即标签栏顺序）
+   */
+  snapshotTabs(): SessionTab[] {
+    return this.getTabsOrdered().map((t) => ({
+      id: t.id,
+      spaceId: t.spaceId,
+      url: t.url,
+      title: t.title,
+      isActive: t.isActive,
+      poppedOut: t.poppedOut,
+    }))
+  }
+
+  /**
+   * 按 WebContents 反查标签 id（判断一次 IPC 请求是从哪个标签页发出的）
+   */
+  findTabIdByWebContents(wc: WebContents): string | null {
+    for (const tab of this.tabs.values()) {
+      if (tab.view.webContents === wc) return tab.id
+    }
+    return null
+  }
+
+  /**
+   * 摘下标签的视图，交给独立窗口挂载
+   *
+   * 只从主窗口移除视图、不销毁 WebContents —— 页面不重新加载，登录态与滚动位置都在。
+   * 若摘走的是活动标签，主窗口自动切到其它未弹出的标签（都弹走了就新建导航页，
+   * 保证主窗口始终有内容可看）。
+   */
+  detachForPopout(tabId: string): WebContentsView | null {
+    const tab = this.tabs.get(tabId)
+    if (!tab || tab.poppedOut) return null
+
+    if (this.mainWindow.contentView.children.includes(tab.view)) {
+      this.mainWindow.contentView.removeChildView(tab.view)
+    }
+    tab.poppedOut = true
+
+    if (tab.isActive) {
+      tab.isActive = false
+      this.activeTabId = null
+      const remaining = this.getTabsOrdered().filter((t) => !t.poppedOut)
+      if (remaining.length > 0) {
+        this.switchTab(remaining[remaining.length - 1].id)
+      } else {
+        this.createTab()
+      }
+    }
+
+    this.notifyTabsChanged()
+    return tab.view
+  }
+
+  /**
+   * 独立窗口关闭后把标签挂回主窗口（视图不重建）
+   * @param makeActive 是否顺带激活它（一个窗口里有多个标签时，只有窗口内活动的那个回来后是活动的）
+   */
+  attachFromPopout(tabId: string, makeActive = true): boolean {
+    const tab = this.tabs.get(tabId)
+    if (!tab || !tab.poppedOut) return false
+
+    tab.poppedOut = false
+    if (makeActive) {
+      for (const other of this.tabs.values()) {
+        if (other.id !== tabId) other.isActive = false
+      }
+      if (!this.mainWindow.contentView.children.includes(tab.view)) {
+        this.mainWindow.contentView.addChildView(tab.view)
+      }
+      tab.isActive = true
+      this.activeTabId = tabId
+      this.updateActiveViewBounds()
+    } else {
+      tab.isActive = false
+    }
+
+    this.notifyTabsChanged()
+    return true
+  }
+
+  /**
+   * 独立窗口关闭，但标签所属空间当前不在前台：只清掉弹出标记，不挂视图
+   * （挂上去会盖住当前空间的内容）。等切回那个空间时 showActive 会正常显示它。
+   */
+  markReturnedFromPopout(tabId: string): boolean {
+    const tab = this.tabs.get(tabId)
+    if (!tab || !tab.poppedOut) return false
+    tab.poppedOut = false
+    this.notifyTabsChanged()
+    return true
+  }
+
+  /**
    * 关闭除指定标签外的所有标签
    */
   closeOtherTabs(keepTabId: string): void {
@@ -292,6 +423,9 @@ export class TabManager {
 
     if (this.mainWindow.contentView.children.includes(tab.view)) {
       this.mainWindow.contentView.removeChildView(tab.view)
+    }
+    if (this.hooks.onBeforeTabClosed) {
+      this.hooks.onBeforeTabClosed(tabId)
     }
     const wc = tab.view.webContents
     if (!wc.isDestroyed()) {
@@ -385,6 +519,7 @@ export class TabManager {
       canGoBack: internal.view.webContents.canGoBack(),
       canGoForward: internal.view.webContents.canGoForward(),
       symbol: extractStockFromUrl(internal.url),
+      poppedOut: internal.poppedOut,
     }
   }
 
@@ -433,6 +568,9 @@ export class TabManager {
       if (this.mainWindow.contentView.children.includes(tab.view)) {
         this.mainWindow.contentView.removeChildView(tab.view)
       }
+      if (this.hooks.onBeforeTabClosed) {
+        this.hooks.onBeforeTabClosed(tab.id)
+      }
       if (!tab.view.webContents.isDestroyed()) {
         tab.view.webContents.close()
       }
@@ -461,14 +599,15 @@ export class TabManager {
    */
   showActive(): void {
     const tab = this.activeTabId ? this.tabs.get(this.activeTabId) : undefined
-    if (!tab) {
-      // 活动标签不存在（空空间 / 遗留脏 ID）：有标签则激活最后一个，否则新建导航页
-      const remaining = this.getTabsOrdered()
+    if (!tab || tab.poppedOut) {
+      // 活动标签不存在，或它已经弹出为独立窗口：退到最后一个未弹出的标签
+      const remaining = this.getTabsOrdered().filter((t) => !t.poppedOut)
       if (remaining.length > 0) {
         this.switchTab(remaining[remaining.length - 1].id)
-      } else {
-        this.createTab()
+        return
       }
+      // 空空间（或全部都弹走了）：只有原本就没有标签时才新建导航页
+      if (!tab) this.createTab()
       return
     }
     if (!this.mainWindow.contentView.children.includes(tab.view)) {

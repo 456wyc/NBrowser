@@ -51,6 +51,27 @@ export function updateVisitDuration(db: Database, id: number, durationMs: number
 }
 
 /**
+ * 查询某股票在时间范围内的浏览记录（复盘闭环：交易的决策依据）
+ * 按开始时间倒序。
+ */
+export function getVisitsBySymbolAndRange(
+  db: Database,
+  symbol: string,
+  from: number,
+  to: number,
+  limit = 50
+): PageVisit[] {
+  const result = db.exec(
+    `SELECT * FROM page_visits
+     WHERE symbol = ? AND started_at >= ? AND started_at <= ?
+     ORDER BY started_at DESC
+     LIMIT ?`,
+    [symbol, from, to, limit]
+  )
+  return result.length > 0 ? toObjects<PageVisit>(result[0]) : []
+}
+
+/**
  * 获取指定日期的访问记录（按天，本地时区）
  */
 export function getVisitsByDate(db: Database, date: Date, space?: string): PageVisit[] {

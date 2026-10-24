@@ -2,24 +2,27 @@ import { useState, useCallback, useEffect } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { TabBar } from './components/TabBar'
 import { AddressBar } from './components/AddressBar'
-import { AiPanel } from './components/AiPanel'
+import { ResearchPanel } from './components/ResearchPanel'
 import { AiSettingsPage } from './pages/AiSettings'
 import { AppSettingsPage } from './pages/AppSettings'
 import { AgentCapabilitiesPage } from './pages/AgentCapabilitiesPage'
+import { PetSettingsPage } from './pages/PetSettings'
 import { TradesPanel } from './pages/TradesPanel'
 import { QuoteHistoryPanel } from './pages/QuoteHistoryPanel'
 import { PageLinksPanel } from './pages/PageLinksPanel'
-import { AgentPanel } from './pages/AgentPanel'
-import { ResearchReportsPanel } from './pages/ResearchReportsPanel'
 import { NotesPanel } from './components/NotesPanel'
 import { StrategyPanel } from './pages/StrategyPanel'
 import { TodayVisitsPage } from './pages/TodayVisits'
 import { LogPanel } from './pages/LogPanel'
+import { CopilotDock } from './components/CopilotDock'
+import { AppMenuBar } from './components/AppMenuBar'
+import { useCopilot } from './hooks/useCopilot'
 import { useAiAnalysis } from './hooks/useAiAnalysis'
 import { useTabs } from './hooks/useTabs'
 import { IPC_CHANNELS, type SpaceId } from '@shared/ipc'
 import { isNavHomeUrl } from '@shared/url'
 import { useLayout, useWebAreaBounds } from './layout/useLayout'
+import type { ResearchTier, ResearchView } from './layout/config'
 import { LayoutToolbar } from './layout/LayoutToolbar'
 import { SecondaryPanel } from './layout/SecondaryPanel'
 import { BottomDock } from './layout/BottomDock'
@@ -44,8 +47,11 @@ function App() {
   const [activeSpace, setActiveSpace] = useState<SpaceId>('watch')
   const [activeTabKey, setActiveTabKey] = useState(0)
   const [fullscreen, setFullscreen] = useState(false)
-  // 设置页内部再分两栏：AI 设置（模型/Key）与应用设置（轨迹/黑名单/日历）
-  const [settingsTab, setSettingsTab] = useState<'ai' | 'app' | 'agent'>('ai')
+  // 设置页内部分栏：AI 设置（模型/Key）、应用设置（轨迹/黑名单/日历）、Agent 能力、桌宠
+  const [settingsTab, setSettingsTab] = useState<'ai' | 'app' | 'agent' | 'pet'>('ai')
+  // 「🔍 研究」模块内部状态：深度分档（快览/深挖/深度研究）与子视图（分档/报告库）
+  const [researchTier, setResearchTier] = useState<ResearchTier>('quick')
+  const [researchView, setResearchView] = useState<ResearchView>('tiers')
   // 地址栏下拉展开时主区顶部要让出的高度（0 表示没有下拉）
   const [addrOverlay, setAddrOverlay] = useState(0)
   // 缩放提示：Cmd/Ctrl +/- 后短暂显示当前百分比
@@ -56,6 +62,18 @@ function App() {
   // 主壳是主题的唯一写入方：其它实例（新标签页视图等）只跟随，避免多方写入互相覆盖
   const { mode: themeMode, toggle: toggleTheme } = useThemeMode({ authoritative: true })
 
+  // AI 桌宠显隐：桌宠是独立浮窗，隐藏后靠顶栏这个按钮 / 助手菜单唤回。
+  // 启动时主进程已经把它显示出来了，所以初值为 true。
+  const [petOn, setPetOn] = useState(true)
+  const togglePet = async () => {
+    try {
+      const res = await window.electronAPI.invoke(IPC_CHANNELS.PET_TOGGLE, { visible: !petOn })
+      setPetOn(res.visible)
+    } catch {
+      /* 桌宠窗口不存在时忽略（比如还没创建成功） */
+    }
+  }
+
   // 主进程推送缩放变化（菜单快捷键 / 站点记忆恢复）
   useEffect(() => {
     const unsubscribe = window.electronAPI.onZoomChanged(({ percent }) => {
@@ -64,6 +82,13 @@ function App() {
     })
     return unsubscribe
   }, [])
+
+  // AI 助手（Copilot）：Cmd/Ctrl+K 或菜单「助手 → AI 助手」召唤
+  const copilot = useCopilot()
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.onCopilotOpen(() => copilot.setOpen(true))
+    return unsubscribe
+  }, [copilot.setOpen])
 
   // 切到内置「笔记」空间时，自动打开笔记面板（内容在面板里，而非网页区）
   useEffect(() => {
@@ -83,24 +108,47 @@ function App() {
   const ai = useAiAnalysis()
   const { activeTab } = useTabs()
 
+  /**
+   * 三空间差异化默认内容（FR-2.5）：
+   * 空间即场景——切到哪个空间，右侧面板就落到该场景的主功能，
+   * 用户不必记住「这个空间该打开哪个面板」，认知负荷从 18 个入口降到 3 个场景。
+   * - 盯盘 📊 → 行情回放（侧栏自选股本就常驻，面板补走势）
+   * - 研究 🔍 → AI 研究（快览档）
+   * - 复盘 📝 → 交易与复盘
+   * 自定义空间不干预（保留用户自己的布局习惯）。
+   */
   const handleSpaceChange = (spaceId: SpaceId) => {
     setActiveSpace(spaceId)
     // 强制刷新标签栏，让它重新加载新空间的标签
     setActiveTabKey((k) => k + 1)
+    if (spaceId === 'watch') {
+      layout.setPanelTab('quoteHistory')
+    } else if (spaceId === 'research') {
+      setResearchTier('quick')
+      setResearchView('tiers')
+      layout.setPanelTab('research')
+    } else if (spaceId === 'review') {
+      layout.setPanelTab('trades')
+    }
   }
 
-  // 右键菜单分析完成后，若侧栏没开则自动展开（不顶掉用户已打开的其他内容）
+  // 右键菜单分析完成后，若面板没开则自动展开到「研究 → 快览」（不顶掉用户已打开的其他内容）
   useEffect(() => {
     if (ai.result && !layout.layout.panelVisible) {
-      layout.openPanel('ai')
+      setResearchTier('quick')
+      setResearchView('tiers')
+      layout.setPanelTab('research')
     }
     // 只在分析结果变化时判断，避免布局一变就抢焦点
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ai.result])
 
   const closePanel = useCallback(() => layout.closePanel(), [layout])
+  // 地址栏 ✨：打开「研究 → 快览」并分析当前页（用 setPanelTab 而非 openPanel，避免已在研究标签时被 toggle 关掉）
   const openAiPanel = useCallback(async () => {
-    layout.openPanel('ai')
+    setResearchTier('quick')
+    setResearchView('tiers')
+    layout.setPanelTab('research')
     await ai.analyzePage()
   }, [ai, layout])
 
@@ -146,8 +194,16 @@ function App() {
             onOpenTrades={() => layout.openPanel('trades')}
             onOpenQuoteHistory={() => layout.openPanel('quoteHistory')}
             onOpenLinks={() => layout.openPanel('links')}
-            onOpenAgent={() => layout.openPanel('agent')}
-            onOpenResearch={() => layout.openPanel('research')}
+            // 研究模块的两个入口：深度研究（分档 → 深度研究）与报告库（子视图）
+            onOpenAgent={() => {
+              setResearchTier('deep')
+              setResearchView('tiers')
+              layout.setPanelTab('research')
+            }}
+            onOpenResearch={() => {
+              setResearchView('reports')
+              layout.setPanelTab('research')
+            }}
             onOpenNotes={() => layout.openPanel('notes')}
           />
           <ResizeHandle
@@ -163,6 +219,7 @@ function App() {
         {/* 顶栏（VSCode 式单行菜单栏）：应用 logo + 搜索框 + 布局控制 + 窗口控制。空间切换统一在左侧侧栏完成 */}
         <div style={styles.topBar} className="drag-region">
           <div style={styles.brand} className="no-drag">🚢</div>
+          <AppMenuBar />
           <div
             style={styles.addrWrap}
             className={navActive ? 'drag-region' : 'no-drag'}
@@ -187,6 +244,25 @@ function App() {
               onReset={layout.resetLayout}
             />
           </div>
+          <div className="no-drag" style={{ display: 'flex', gap: 2 }}>
+            <button
+              className={'icon-btn' + (copilot.open ? ' active' : '')}
+              style={copilot.open ? { color: 'var(--blue)' } : undefined}
+              onClick={() => copilot.setOpen(!copilot.open)}
+              title="AI 助手（Cmd/Ctrl+K）"
+            >
+              🤖
+            </button>
+            {/* AI 桌宠开关：桌宠是独立浮窗，藏起来之后就靠这里（或助手菜单 / Ctrl+Shift+P）唤回来 */}
+            <button
+              className={'icon-btn' + (petOn ? ' active' : '')}
+              style={petOn ? { color: 'var(--blue)' } : undefined}
+              onClick={() => void togglePet()}
+              title="牛来（Cmd/Ctrl+Shift+P）"
+            >
+              🐮
+            </button>
+          </div>
           <div className="no-drag">
             <button
               className="icon-btn"
@@ -204,6 +280,29 @@ function App() {
         <div style={styles.contentRow}>
           <div style={styles.centerCol}>
             <TabBar key={`tabs-${activeSpace}-${activeTabKey}`} />
+
+            {/*
+              AI 助手：作为 flex 节点插在网页区上方——网页是独立 WebContentsView、
+              盖在 DOM 之上，fixed 浮层会被遮住；flex 让位后网页区自然收缩，
+              useWebAreaBounds 的 ResizeObserver 会把新矩形同步给主进程。
+            */}
+            {copilot.open && (
+              <CopilotDock
+                messages={copilot.messages}
+                running={copilot.running}
+                error={copilot.error}
+                sessions={copilot.sessions}
+                sessionId={copilot.sessionId}
+                pendingAction={copilot.pendingAction}
+                onSend={(text) => void copilot.send(text, activeTab?.url)}
+                onStop={() => void copilot.stop()}
+                onConfirmAction={(approved) => void copilot.confirmAction(approved)}
+                onNewSession={copilot.newSession}
+                onLoadSession={(id) => void copilot.loadSession(id)}
+                onDeleteSession={(id) => void copilot.removeSession(id)}
+                onClose={() => copilot.setOpen(false)}
+              />
+            )}
 
             {/*
               地址栏下拉让位条：网页是独立的 WebContentsView，盖在 DOM 之上，
@@ -248,22 +347,17 @@ function App() {
                 onTabChange={layout.setPanelTab}
                 onClose={layout.closePanel}
               >
-                {panelTab === 'ai' && (
-                  <AiPanel
-                    result={ai.result}
-                    history={ai.history}
-                    loading={ai.loading}
-                    loadingHistory={ai.loadingHistory}
-                    error={ai.error}
-                    onAnalyze={() => ai.analyzePage()}
-                    onLoadHistory={() => ai.loadHistory()}
-                    onDeleteRecord={ai.deleteRecord}
-                    onClose={closePanel}
-                    onOpenSettings={openAiSettings}
+                {panelTab === 'research' && (
+                  <ResearchPanel
+                    tier={researchTier}
+                    onTierChange={setResearchTier}
+                    view={researchView}
+                    onViewChange={setResearchView}
+                    ai={ai}
+                    onClosePanel={closePanel}
+                    onOpenAiSettings={openAiSettings}
                   />
                 )}
-                {panelTab === 'agent' && <AgentPanel />}
-                {panelTab === 'research' && <ResearchReportsPanel />}
                 {panelTab === 'strategy' && <StrategyPanel />}
                 {panelTab === 'trades' && <TradesPanel />}
                 {panelTab === 'quoteHistory' && <QuoteHistoryPanel />}
@@ -290,11 +384,18 @@ function App() {
                       >
                          Agent 能力
                       </SegButton>
+                      <SegButton
+                        active={settingsTab === 'pet'}
+                        onClick={() => setSettingsTab('pet')}
+                      >
+                        🐮 牛来
+                      </SegButton>
                     </div>
                     <div style={styles.settingsBody}>
                       {settingsTab === 'ai' && <AiSettingsPage />}
                       {settingsTab === 'app' && <AppSettingsPage />}
                       {settingsTab === 'agent' && <AgentCapabilitiesPage />}
+                      {settingsTab === 'pet' && <PetSettingsPage />}
                     </div>
                   </div>
                 )}

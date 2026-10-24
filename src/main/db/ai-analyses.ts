@@ -72,6 +72,27 @@ export function getAnalysesBySymbol(db: Database, symbol: string): AiAnalysisRec
 }
 
 /**
+ * 查询某股票在时间范围内的分析记录（复盘闭环：交易的决策依据）
+ * 按时间倒序。
+ */
+export function getAnalysesBySymbolAndRange(
+  db: Database,
+  symbol: string,
+  from: number,
+  to: number,
+  limit = 50
+): AiAnalysisRecord[] {
+  const result = db.exec(
+    `SELECT * FROM ai_analyses
+     WHERE symbol = ? AND created_at >= ? AND created_at <= ?
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    [symbol, from, to, limit]
+  )
+  return result.length > 0 ? toObjects<AiAnalysisRecord>(result[0]) : []
+}
+
+/**
  * 获取近期分析记录
  */
 export function getRecentAnalyses(db: Database, limit = 20): AiAnalysisRecord[] {

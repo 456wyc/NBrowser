@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AiAnalysisView, PageType } from '@shared/ipc'
+import { analysisToNoteMarkdown, noteTitleFromPage } from '@shared/note-from-analysis'
+import { saveNoteWithToast } from '../lib/saveNote'
+import { useToast } from '../hooks/useToast'
 
 export interface AiPanelProps {
   result: AiAnalysisView | null
@@ -37,6 +40,13 @@ export function AiPanel({
   const [tab, setTab] = useState<'current' | 'history'>('current')
   const [keyword, setKeyword] = useState('')
   const [openId, setOpenId] = useState<number | null>(null)
+  const { toast, showToast } = useToast()
+
+  // 一键沉淀：把本次分析结果存为笔记（复用 notes:save 的完整副作用）
+  const handleSaveNote = async () => {
+    if (!result) return
+    await saveNoteWithToast(noteTitleFromPage(result.title, result.symbol), analysisToNoteMarkdown(result), showToast)
+  }
 
   // 历史按关键字过滤（代码 / 网址 / 摘要）
   const visibleHistory = useMemo(() => {
@@ -57,6 +67,11 @@ export function AiPanel({
 
   return (
     <div style={styles.container}>
+      {toast && (
+        <div className={toast.ok ? 'toast' : 'toast-error'} style={styles.toastInline}>
+          {toast.text}
+        </div>
+      )}
       {/* 头部 */}
       <div style={styles.header}>
         <div style={styles.headerLeft}>
@@ -64,6 +79,14 @@ export function AiPanel({
           <span style={styles.headerTitle}>AI 整理</span>
         </div>
         <div style={styles.headerActions}>
+          <button
+            onClick={handleSaveNote}
+            disabled={!result}
+            className="icon-btn"
+            title="存为笔记"
+          >
+            📒
+          </button>
           <button onClick={onAnalyze} disabled={loading} className="icon-btn" title="重新分析当前页">
             {loading ? '…' : '↻'}
           </button>
@@ -352,6 +375,7 @@ const styles: Record<string, React.CSSProperties> = {
   headerIcon: { fontSize: 16 },
   headerTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text)' },
   headerActions: { display: 'flex', gap: 2 },
+  toastInline: { margin: '6px 12px 0' },
   tabs: {
     display: 'flex',
     gap: 4,

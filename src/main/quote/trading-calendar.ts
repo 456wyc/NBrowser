@@ -63,12 +63,64 @@ export function isTradingDay(date: Date, config: TradingCalendarConfig = DEFAULT
 }
 
 /**
- * 判断当前是否为交易时段（交易日 + 上午 9:30-11:30 / 下午 13:00-15:00）。
+ * 判断当前是否为连续竞价（可成交）时段：交易日 + 上午 9:30-11:30 / 下午 13:00-15:00。
+ *
+ * 注意与「集合竞价」区分：本函数只覆盖真正撮合成交的时段，
+ * 策略信号判定用它（`strategy/runner.ts`），避免用集合竞价的试探价发出假信号。
  */
 export function isTradingHours(date: Date, config: TradingCalendarConfig = DEFAULT_CALENDAR): boolean {
   if (!isTradingDay(date, config)) return false
   const minutes = date.getHours() * 60 + date.getMinutes()
   return (minutes >= 570 && minutes <= 690) || (minutes >= 780 && minutes <= 900)
+}
+
+/** 集合竞价时段：开盘 9:15-9:25（9:20 后不可撤单）、收盘 14:57-15:00 */
+export const CALL_AUCTION_SESSIONS: ReadonlyArray<{
+  start: number
+  end: number
+  phase: 'open' | 'close'
+}> = [
+  { start: 9 * 60 + 15, end: 9 * 60 + 25, phase: 'open' },
+  { start: 14 * 60 + 57, end: 15 * 60, phase: 'close' },
+]
+
+export type CallAuctionPhase = 'open' | 'close' | null
+
+/**
+ * 当前处于哪个集合竞价阶段（不在集合竞价 / 非交易日返回 null）
+ */
+export function callAuctionPhase(
+  date: Date,
+  config: TradingCalendarConfig = DEFAULT_CALENDAR
+): CallAuctionPhase {
+  if (!isTradingDay(date, config)) return null
+  const minutes = date.getHours() * 60 + date.getMinutes()
+  for (const session of CALL_AUCTION_SESSIONS) {
+    if (minutes >= session.start && minutes < session.end) return session.phase
+  }
+  return null
+}
+
+/** 是否处于集合竞价时段 */
+export function isCallAuction(
+  date: Date,
+  config: TradingCalendarConfig = DEFAULT_CALENDAR
+): boolean {
+  return callAuctionPhase(date, config) !== null
+}
+
+/**
+ * 是否需要按交易时段的频率拉行情：连续竞价 + 集合竞价
+ *
+ * 集合竞价期间报价一直在变（开盘 9:20 后不可撤、收盘 14:57 后集中撮合），
+ * 盯盘要看得到这段价格，否则 9:15-9:25 会按非交易时段的 60 秒低频轮询，
+ * 等 9:30 开盘才第一次刷新。策略信号仍只认 `isTradingHours`。
+ */
+export function isQuoteActiveHours(
+  date: Date,
+  config: TradingCalendarConfig = DEFAULT_CALENDAR
+): boolean {
+  return isTradingHours(date, config) || isCallAuction(date, config)
 }
 
 /**

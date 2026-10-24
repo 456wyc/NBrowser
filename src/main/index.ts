@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, ipcMain, dialog, webContents } from 'electron'
 import { IPC_CHANNELS, type PingRequest, type PingResponse } from '@shared/ipc'
 import { MainWindowManager } from './browser/main-window'
+import { createPetWindow, destroyPetWindow, togglePetWindow } from './browser/pet-window'
 import { buildApplicationMenu } from './menu'
 import {
   registerIpcHandlers,
@@ -12,7 +13,7 @@ import { getDb } from './db'
 import { getAllNotesFull } from './db/notes'
 import { reconcileNotesSync } from './notes-sync'
 import type { Database } from 'sql.js'
-import { EastmoneyProvider } from './quote/eastmoney-provider'
+import { createQuoteProvider } from './quote/provider-factory'
 import { QuotePollingManager } from './quote/polling-manager'
 import {
   ZoomManager,
@@ -48,7 +49,19 @@ function setupApplicationMenu(): void {
 
   Menu.setApplicationMenu(
     buildApplicationMenu({
-      createTab: () => mgr()?.getTabManager().createTab(undefined, true),
+      // 与浏览器一致：Ctrl+T 开在**焦点所在的窗口**里
+      // 焦点在独立窗口时开成那个窗口的新一页，而不是悄悄开到主窗口
+      createTab: () => {
+        const m = mgr()
+        if (!m) return
+        const focused = BrowserWindow.getFocusedWindow()
+        const windowId = m.getPopoutManager().windowIdOfBrowserWindow(focused)
+        if (windowId) {
+          m.newTabInPopoutWindow(windowId)
+          return
+        }
+        m.getTabManager().createTab(undefined, true)
+      },
       closeTab: () => {
         const tm = mgr()?.getTabManager()
         const activeId = tm?.getActiveTabId()
@@ -63,10 +76,25 @@ function setupApplicationMenu(): void {
           win.webContents.send(IPC_CHANNELS.APP_FOCUS_ADDRESS)
         }
       },
+      // 把当前标签弹出为独立窗口：多屏时可以把不同页面拖到不同屏幕
+      popoutTab: () => {
+        const m = mgr()
+        if (!m) return
+        const tabId = m.getTabManager().getActiveTabId()
+        if (tabId) m.getPopoutManager().open(tabId)
+      },
+      // AI 助手：推送事件让渲染进程弹出 Copilot（快捷键在网页有焦点时同样生效）
+      openCopilot: () => {
+        const win = mgr()?.getWindow()
+        if (win && !win.isDestroyed()) {
+          win.webContents.send(IPC_CHANNELS.AGENT_COPILOT_OPEN)
+        }
+      },
       // 缩放：优先缩放当前网页标签（与 Chrome 一致）；没有网页标签时缩放应用界面
       zoomIn: () => void stepCurrentZoom(1, { preferActiveTab: true }),
       zoomOut: () => void stepCurrentZoom(-1, { preferActiveTab: true }),
       resetZoom: () => void stepCurrentZoom(0, { preferActiveTab: true }),
+      togglePet: () => togglePetWindow(),
     })
   )
 }
@@ -102,9 +130,9 @@ app.whenReady().then(async () => {
   }
 
   // 初始化行情 Provider 和轮询管理器
-  const quoteProvider = new EastmoneyProvider()
-  // 轮询间隔读 config.json（设置页可改），不再硬编码
+  // 数据源按配置创建（东财/腾讯/自定义），未知配置回退东财
   const quoteCfg = getConfig().quote
+  const quoteProvider = createQuoteProvider(quoteCfg.provider, quoteCfg.custom)
   quotePollingMgr = new QuotePollingManager(quoteProvider, {
     tradingIntervalMs: quoteCfg.tradingIntervalMs,
     nonTradingIntervalMs: quoteCfg.nonTradingIntervalMs,
@@ -139,6 +167,26 @@ app.whenReady().then(async () => {
   })
   console.log('[main] Main window created')
 
+  // AI 桌宠：一个始终置顶的透明小浮窗，独立于主窗口存在
+  try {
+    createPetWindow(db)
+  } catch (err) {
+    console.error('[main] Failed to create pet window:', err)
+  }
+
+
+
+  // 主窗口关闭即收掉所有独立窗口：否则它们会变成「没有主窗口的孤儿窗口」，
+  // 关掉最后一个时 window-all-closed 才会真正退出。
+  // 顺序很重要：先存档（此时独立窗口还开着，能记住它们摆在哪块屏），再销毁。
+  mainWindowMgr.getWindow().once('closed', () => {
+    mainWindowMgr?.finalizeSession()
+    mainWindowMgr?.getPopoutManager().discardAll()
+    // 桌宠不能变成没有主窗口的孤儿浮窗：主窗口关了就一起收掉，
+    // 否则 window-all-closed 永远不触发，应用退不出去。
+    destroyPetWindow()
+  })
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0 && db) {
     mainWindowMgr = new MainWindowManager(db)
@@ -151,6 +199,15 @@ app.whenReady().then(async () => {
   console.error('[main] Startup failed:', detail)
   dialog.showErrorBox('启动失败', `应用初始化时发生错误：\n\n${detail}`)
   app.quit()
+})
+
+// 退出前：先做最后一次会话存档（此时窗口都还在，位置记得住），再强制收掉独立窗口，
+// 避免关闭过程里把标签「还原」回已经没了的主窗口。
+// 注：本监听器在模块加载时注册，早于 db 模块的落盘钩子，因此存档一定先于数据库写盘。
+app.on('before-quit', () => {
+  mainWindowMgr?.finalizeSession()
+  mainWindowMgr?.getPopoutManager().discardAll()
+  destroyPetWindow()
 })
 
 app.on('window-all-closed', () => {

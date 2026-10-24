@@ -6,11 +6,15 @@ import type {
   TabsGetAllResponse,
   AiAnalysisDonePayload,
   AgentEvent,
+  PageAgentEvent,
+  PetNotifyPayload,
   StrategySignal,
   WatchlistUpdateEvent,
   NotesUpdatedEvent,
   ThemeUpdatedEvent,
   ZoomChangedPayload,
+  WindowsGetAllResponse,
+  WindowsGetTabsResponse,
 } from '@shared/ipc'
 
 declare global {
@@ -23,6 +27,7 @@ declare global {
       onQuotesUpdated: (callback: (update: QuotesUpdate) => void) => () => void
       onTabsUpdated: (callback: (payload: TabsGetAllResponse) => void) => () => void
       onFocusAddress: (callback: () => void) => () => void
+      onCopilotOpen: (callback: () => void) => () => void
       onAiAnalysisDone: (callback: (payload: AiAnalysisDonePayload) => void) => () => void
       onAgentStream: (callback: (event: AgentEvent) => void) => () => void
       onStrategySignal: (callback: (signal: StrategySignal) => void) => () => void
@@ -30,6 +35,10 @@ declare global {
       onNotesUpdated: (callback: (payload: NotesUpdatedEvent) => void) => () => void
       onThemeUpdated: (callback: (payload: ThemeUpdatedEvent) => void) => () => void
       onZoomChanged: (callback: (payload: ZoomChangedPayload) => void) => () => void
+      onPopoutWindowsUpdated: (callback: (payload: WindowsGetAllResponse) => void) => () => void
+      onPopoutTabsUpdated: (callback: (payload: WindowsGetTabsResponse) => void) => () => void
+      onPageAgentEvent: (callback: (event: PageAgentEvent) => void) => () => void
+      onPetNotify: (callback: (payload: PetNotifyPayload) => void) => () => void
     }
   }
 }

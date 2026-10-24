@@ -6,11 +6,13 @@ import {
   type TradeSide,
   type ParsedTrade,
   type TradesImportParseResponse,
+  type TradesParseNaturalResponse,
 } from '@shared/ipc'
 import { computePortfolio, unrealizedPnl } from '@shared/pnl'
 import { useQuotes } from '../hooks/useQuotes'
 import { useToast } from '../hooks/useToast'
 import { ErrorState } from '../components/ErrorState'
+import { DecisionContext } from '../components/DecisionContext'
 
 interface DraftTrade {
   symbol: string
@@ -86,6 +88,14 @@ export function TradesPanel() {
   const [importErr, setImportErr] = useState<string | null>(null)
   const [preview, setPreview] = useState<TradesImportParseResponse | null>(null)
   const [selected, setSelected] = useState<Set<number>>(new Set())
+
+  // 自然语言录入（大模型解析大白话 → 预览确认 → 入库，source=manual）
+  const [showNatural, setShowNatural] = useState(false)
+  const [naturalText, setNaturalText] = useState('')
+  const [naturalParsing, setNaturalParsing] = useState(false)
+  const [naturalErr, setNaturalErr] = useState<string | null>(null)
+  const [naturalPreview, setNaturalPreview] = useState<TradesParseNaturalResponse | null>(null)
+  const [naturalSelected, setNaturalSelected] = useState<Set<number>>(new Set())
 
   // 列表筛选（FR-10.6：按代码/名称关键字 + 时间范围）
   const [keyword, setKeyword] = useState('')
@@ -257,6 +267,53 @@ export function TradesPanel() {
     }
   }
 
+  // ---------- 自然语言录入 ----------
+  const handleNaturalParse = async () => {
+    if (!naturalText.trim()) {
+      setNaturalErr('请先输入交易描述')
+      return
+    }
+    setNaturalParsing(true)
+    setNaturalErr(null)
+    setNaturalPreview(null)
+    try {
+      const res = await window.electronAPI.invoke(IPC_CHANNELS.TRADES_PARSE_NATURAL, {
+        text: naturalText,
+      })
+      setNaturalPreview(res)
+      setNaturalSelected(new Set(res.trades.map((_, i) => i)))
+    } catch (err) {
+      setNaturalErr(err instanceof Error ? err.message : '解析失败')
+    } finally {
+      setNaturalParsing(false)
+    }
+  }
+
+  const handleNaturalConfirm = async () => {
+    if (!naturalPreview) return
+    const trades = naturalPreview.trades.filter((_: ParsedTrade, i: number) => naturalSelected.has(i))
+    if (trades.length === 0) {
+      setNaturalErr('请至少选择一条成交')
+      return
+    }
+    setNaturalParsing(true)
+    try {
+      const res = await window.electronAPI.invoke(IPC_CHANNELS.TRADES_IMPORT_BULK, {
+        trades,
+        source: 'manual',
+      })
+      showToast(`已录入 ${res.inserted} 条，跳过重复 ${res.skipped} 条`)
+      setShowNatural(false)
+      setNaturalPreview(null)
+      setNaturalText('')
+      await load()
+    } catch (err) {
+      setNaturalErr(err instanceof Error ? err.message : '录入失败')
+    } finally {
+      setNaturalParsing(false)
+    }
+  }
+
   if (loading) return <div style={styles.loading}>加载中…</div>
 
   return (
@@ -266,6 +323,16 @@ export function TradesPanel() {
         <div style={styles.headerActions}>
           <button onClick={() => setShowImport(!showImport)} className="btn">
             {showImport ? '关闭导入' : '导入交割单'}
+          </button>
+          <button
+            onClick={() => {
+              setShowNatural(!showNatural)
+              if (showImport) setShowImport(false)
+            }}
+            className="btn"
+            title="用大白话描述交易，AI 解析后预览确认"
+          >
+            {showNatural ? '关闭智能录入' : '🤖 智能录入'}
           </button>
           <button onClick={() => setShowForm(!showForm)} className="btn">
             {showForm ? '取消' : '+ 记一笔'}
@@ -444,44 +511,75 @@ export function TradesPanel() {
               {preview.trades.length === 0 ? (
                 <div style={styles.emptyHint}>未能解析出成交记录，请检查文本格式或补充表头。</div>
               ) : (
-                <div style={styles.previewTable}>
-                  <div style={styles.previewRowHead}>
-                    <span />
-                    <span>代码</span>
-                    <span>名称</span>
-                    <span>方向</span>
-                    <span>价格</span>
-                    <span>数量</span>
-                    <span>手续费</span>
-                    <span>时间</span>
-                  </div>
-                  {preview.trades.map((t: ParsedTrade, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        ...styles.previewRow,
-                        ...(selected.has(i) ? styles.previewRowSel : {}),
-                      }}
-                      onClick={() => toggleSelect(i)}
-                    >
-                      <input
-                        type="checkbox"
-                        className="checkbox"
-                        checked={selected.has(i)}
-                        onChange={() => toggleSelect(i)}
-                      />
-                      <span>{t.symbol}</span>
-                      <span>{t.name || '—'}</span>
-                      <span style={{ color: t.side === 'buy' ? 'var(--up)' : 'var(--down)' }}>
-                        {t.side === 'buy' ? '买' : '卖'}
-                      </span>
-                      <span>{t.price.toFixed(2)}</span>
-                      <span>{t.quantity}</span>
-                      <span>{t.fee.toFixed(2)}</span>
-                      <span>{formatTime(t.tradedAt)}</span>
-                    </div>
-                  ))}
+                <TradePreviewTable trades={preview.trades} selected={selected} onToggle={toggleSelect} />
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 自然语言录入：大白话 → AI 解析 → 预览确认 → 入库（source=manual） */}
+      {showNatural && (
+        <div style={styles.importBox}>
+          <div style={styles.importHint}>
+            用大白话记录交易，例如：<b>今天 14:32 以 1500.5 买入贵州茅台 100 股，手续费 5 元</b>；
+            支持一次说多笔（「买入茅台 100 股，卖出平安银行 200 股」）。解析后请核对再录入。
+          </div>
+          <textarea
+            className="textarea"
+            value={naturalText}
+            onChange={(e) => setNaturalText(e.target.value)}
+            placeholder="在此输入交易描述…"
+            rows={3}
+          />
+          <button
+            onClick={handleNaturalParse}
+            disabled={naturalParsing}
+            className="btn-primary"
+            style={styles.blockBtn}
+          >
+            {naturalParsing ? '解析中…' : '🤖 解析'}
+          </button>
+
+          {naturalErr && <div className="toast-error">{naturalErr}</div>}
+
+          {naturalPreview && (
+            <div style={styles.preview}>
+              <div style={styles.previewHead}>
+                <span>
+                  大模型解析 ｜ 共 {naturalPreview.trades.length} 条（请核对，确认后写入「手工记录」）
+                </span>
+                {naturalPreview.trades.length > 0 && (
+                  <button
+                    onClick={handleNaturalConfirm}
+                    disabled={naturalParsing}
+                    className="btn-primary"
+                    style={styles.blockBtn}
+                  >
+                    {naturalParsing ? '录入中…' : `录入选中 (${naturalSelected.size})`}
+                  </button>
+                )}
+              </div>
+              {naturalPreview.warnings.length > 0 && (
+                <div style={styles.previewWarn}>{naturalPreview.warnings.slice(0, 3).join('；')}</div>
+              )}
+              {naturalPreview.trades.length === 0 ? (
+                <div style={styles.emptyHint}>
+                  未能识别出成交记录，请补充代码（或名称）、方向、价格、数量等要素。
                 </div>
+              ) : (
+                <TradePreviewTable
+                  trades={naturalPreview.trades}
+                  selected={naturalSelected}
+                  onToggle={(i) =>
+                    setNaturalSelected((cur) => {
+                      const next = new Set(cur)
+                      if (next.has(i)) next.delete(i)
+                      else next.add(i)
+                      return next
+                    })
+                  }
+                />
               )}
             </div>
           )}
@@ -604,6 +702,58 @@ interface TradeCardProps {
   onSaved: () => void
   onDelete: () => void
   onNotify: (text: string, ok?: boolean) => void
+}
+
+/** 解析结果预览表（交割单导入与自然语言录入共用） */
+function TradePreviewTable({
+  trades,
+  selected,
+  onToggle,
+}: {
+  trades: ParsedTrade[]
+  selected: Set<number>
+  onToggle: (i: number) => void
+}) {
+  return (
+    <div style={styles.previewTable}>
+      <div style={styles.previewRowHead}>
+        <span />
+        <span>代码</span>
+        <span>名称</span>
+        <span>方向</span>
+        <span>价格</span>
+        <span>数量</span>
+        <span>手续费</span>
+        <span>时间</span>
+      </div>
+      {trades.map((t: ParsedTrade, i) => (
+        <div
+          key={i}
+          style={{
+            ...styles.previewRow,
+            ...(selected.has(i) ? styles.previewRowSel : {}),
+          }}
+          onClick={() => onToggle(i)}
+        >
+          <input
+            type="checkbox"
+            className="checkbox"
+            checked={selected.has(i)}
+            onChange={() => onToggle(i)}
+          />
+          <span>{t.symbol}</span>
+          <span>{t.name || '—'}</span>
+          <span style={{ color: t.side === 'buy' ? 'var(--up)' : 'var(--down)' }}>
+            {t.side === 'buy' ? '买' : '卖'}
+          </span>
+          <span>{t.price.toFixed(2)}</span>
+          <span>{t.quantity}</span>
+          <span>{t.fee.toFixed(2)}</span>
+          <span>{formatTime(t.tradedAt)}</span>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 function TradeCard({
@@ -732,6 +882,8 @@ function TradeCard({
             />
           ) : (
             <>
+          {/* 复盘闭环：先看当时的决策依据，再判断理由是否成立 */}
+          <DecisionContext symbol={trade.symbol} tradedAt={trade.traded_at} side={trade.side} />
           <div style={styles.reviewQ}>当时的理由成立吗？</div>
           <div style={styles.sideRow}>
             {[

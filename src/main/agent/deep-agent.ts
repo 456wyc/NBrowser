@@ -1,15 +1,14 @@
 import { ChatOpenAI } from '@langchain/openai'
 import { DynamicStructuredTool } from '@langchain/core/tools'
 import { HumanMessage, SystemMessage, ToolMessage } from '@langchain/core/messages'
-import { z } from 'zod'
 import type { BrowserWindow, WebContents } from 'electron'
-import { runInHeadlessPage } from '../browser/headless-page'
-import { extractPageContent } from '../browser/content-extractor'
-import { eastmoneyQuoteUrl, eastmoneyAnnouncementsUrl } from '@shared/stock-market'
 import type { AgentEvent, AgentMode } from '@shared/ipc'
 import type { AgentCapabilitiesConfig } from '@shared/agent-capabilities'
 import { McpClient } from './mcp-client'
 import { buildCustomTool } from './custom-tool'
+import { buildWebTools, toolMapOf } from './tools'
+
+export { filterSearchLinks } from './tools'
 
 export interface AgentDeps {
   getWindow: () => BrowserWindow
@@ -91,7 +90,7 @@ export class DeepResearchAgent {
     const baseTools = this.buildTools()
     const tools = [...baseTools, ...mcpTools]
     const llmWithTools = model.bindTools(tools)
-    const toolMap = new Map(tools.map((t) => [t.name, t]))
+    const toolMap = toolMapOf(tools)
 
     const messages = [new SystemMessage(this.systemPrompt(opts)), new HumanMessage(query)]
 
@@ -151,136 +150,11 @@ export class DeepResearchAgent {
   }
 
   private buildTools(): DynamicStructuredTool[] {
-    const openAndRead = new DynamicStructuredTool({
-      name: 'open_and_read',
-      description:
-        '打开一个网页 URL 并提取其主要正文、标题与关键链接，用于阅读具体页面内容（公告、新闻、研报、行情页等）。输入应为完整 http(s) 链接。',
-      schema: z.object({ url: z.string().describe('要打开并阅读的完整 URL') }),
-      func: async ({ url }) => {
-        const win = this.deps.getWindow()
-        return runInHeadlessPage(win, url, async (wc) => {
-          const c = await extractPageContent(wc)
-          const links = (c.links || [])
-            .slice(0, 15)
-            .map((l: any) => ({ text: l.text, href: l.href }))
-          return JSON.stringify(
-            {
-              url,
-              title: c.title,
-              mainText: (c.text || '').slice(0, 4000),
-              links,
-            },
-            null,
-            2
-          )
-        })
-      },
-    })
-
-    const webSearch = new DynamicStructuredTool({
-      name: 'web_search',
-      description:
-        '用搜索引擎（百度）检索关键词，返回最相关的结果链接列表（标题 + URL），用于发现需要深入阅读的页面。',
-      schema: z.object({ query: z.string().describe('搜索关键词，如「贵州茅台 2024 年报 净利润」') }),
-      func: async ({ query }) => {
-        const win = this.deps.getWindow()
-        const searchUrl = `https://www.baidu.com/s?wd=${encodeURIComponent(query)}`
-        return runInHeadlessPage(win, searchUrl, async (wc) => {
-          const c = await extractPageContent(wc)
-          const results = filterSearchLinks(c.links || [])
-          return JSON.stringify({ query, results: results.slice(0, 12) }, null, 2)
-        })
-      },
-    })
-
-    const analyzeCurrent = new DynamicStructuredTool({
-      name: 'analyze_current_page',
-      description:
-        '读取用户当前正在浏览的标签页内容（无需再传 URL），用于基于当前页面深挖。仅在「深挖当前页」模式下使用。',
-      schema: z.object({}),
-      func: async () => {
-        const wc = this.deps.getActiveWebContents()
-        if (!wc) return JSON.stringify({ error: '当前没有活动标签页' })
-        const c = await extractPageContent(wc)
-        const links = (c.links || [])
-          .slice(0, 15)
-          .map((l: any) => ({ text: l.text, href: l.href }))
-        return JSON.stringify(
-          {
-            url: wc.getURL(),
-            title: c.title,
-            mainText: (c.text || '').slice(0, 4000),
-            links,
-          },
-          null,
-          2
-        )
-      },
-    })
-
-    const fetchQuote = new DynamicStructuredTool({
-      name: 'fetch_stock_quote',
-      description:
-        '抓取指定股票的东方财富行情页：现价、涨跌幅、成交量、市值、估值等关键数据。已知股票代码时优先用它，比搜索引擎更准确、更省步骤。',
-      schema: z.object({
-        symbol: z.string().describe('股票代码，如 600519、600519.SH、000001'),
-      }),
-      func: async ({ symbol }) => {
-        const win = this.deps.getWindow()
-        const url = eastmoneyQuoteUrl(symbol)
-        return runInHeadlessPage(win, url, async (wc) => {
-          const c = await extractPageContent(wc)
-          return JSON.stringify(
-            { symbol, url, title: c.title, mainText: (c.text || '').slice(0, 4000) },
-            null,
-            2
-          )
-        })
-      },
-    })
-
-    const fetchAnnouncements = new DynamicStructuredTool({
-      name: 'fetch_stock_announcements',
-      description:
-        '抓取指定股票的东方财富「个股公告」页：最新公告标题与日期，用于了解近期公告、财报披露、重大事项。已知股票代码时优先使用。',
-      schema: z.object({
-        symbol: z.string().describe('股票代码，如 600519、600519.SH'),
-      }),
-      func: async ({ symbol }) => {
-        const win = this.deps.getWindow()
-        const url = eastmoneyAnnouncementsUrl(symbol)
-        return runInHeadlessPage(win, url, async (wc) => {
-          const c = await extractPageContent(wc)
-          const links = (c.links || [])
-            .filter((l: any) => /notice|ann|\/detail/i.test(l.href || ''))
-            .slice(0, 15)
-            .map((l: any) => ({ text: l.text, href: l.href }))
-          return JSON.stringify(
-            {
-              symbol,
-              url,
-              title: c.title,
-              mainText: (c.text || '').slice(0, 4000),
-              links,
-            },
-            null,
-            2
-          )
-        })
-      },
-    })
-
     const cap = this.config.capabilities
-    const named: Array<[string, DynamicStructuredTool]> = [
-      ['web_search', webSearch],
-      ['fetch_stock_quote', fetchQuote],
-      ['fetch_stock_announcements', fetchAnnouncements],
-      ['open_and_read', openAndRead],
-      ['analyze_current_page', analyzeCurrent],
-    ]
     const tools: DynamicStructuredTool[] = []
-    for (const [name, tool] of named) {
-      const ov = cap.builtinTools?.[name]
+    // 联网/网页工具：与 Copilot 共用同一实现（tools.ts）
+    for (const tool of buildWebTools(this.deps)) {
+      const ov = cap.builtinTools?.[tool.name]
       if (ov && ov.enabled === false) continue
       if (ov && ov.description) tool.description = ov.description
       tools.push(tool)
@@ -330,23 +204,4 @@ export class DeepResearchAgent {
     }
     return base
   }
-}
-
-/**
- * 从搜索引擎结果页抽取真实结果链接，过滤掉站内 UI / 无关链接。
- */
-export function filterSearchLinks(
-  links: { text: string; href: string }[]
-): { title: string; url: string }[] {
-  const seen = new Set<string>()
-  const out: { title: string; url: string }[] = []
-  for (const l of links) {
-    const h = l.href || ''
-    if (!/^https?:\/\//i.test(h)) continue
-    if (/^https?:\/\/www\.baidu\.com\/(s|home|index|login|register)?([/?]|$)/i.test(h)) continue
-    if (seen.has(h)) continue
-    seen.add(h)
-    out.push({ title: l.text || h, url: h })
-  }
-  return out
 }

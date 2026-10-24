@@ -14,6 +14,7 @@ import { migration_008 } from './migrations/008_bookmark_group_kind'
 import { migration_009 } from './migrations/009_notes'
 import { migration_010 } from './migrations/010_notes_tags'
 import { migration_011 } from './migrations/011_notes_embeddings'
+import { migration_012 } from './migrations/012_agent_sessions'
 import { pruneQuoteHistory } from './quote-history'
 import { seedSmartGroups } from './watchlist'
 
@@ -35,6 +36,7 @@ const migrations: Migration[] = [
   migration_009,
   migration_010,
   migration_011,
+  migration_012,
 ]
 
 /**

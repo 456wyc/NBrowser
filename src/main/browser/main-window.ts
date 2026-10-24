@@ -5,6 +5,7 @@ import {
   type ContextMenuParams,
 } from 'electron'
 import { TabManager } from './tab-manager'
+import { PopoutWindowManager } from './popout-window'
 import { loadSpaces, type SpaceId } from './space-manager'
 import type { Tab, AiAnalysisDonePayload, Space, ThemeMode } from '@shared/ipc'
 import { IPC_CHANNELS } from '@shared/ipc'
@@ -13,7 +14,21 @@ import { aiService } from '../ai/service'
 import { buildWebContextMenu } from '../context-menu'
 import { runInHeadlessPage } from './headless-page'
 import { addToWatchlist } from '../db/watchlist'
-import { getSearchEngineTemplate, getSpaces, setSpaces } from '../db/settings'
+import {
+  getSearchEngineTemplate,
+  getSession,
+  getSpaces,
+  isSessionRestoreEnabled,
+  setSession,
+  setSpaces,
+} from '../db/settings'
+import {
+  buildSession,
+  sanitizeSession,
+  tabsForSpace,
+  windowsForRestoredTabs,
+  type SessionTab,
+} from '@shared/session-restore'
 import { getDb } from '../db'
 import { PageVisitTracker } from '../tracking/page-tracker'
 
@@ -50,19 +65,113 @@ export class MainWindowManager {
   private webArea: WebAreaBounds = { x: 0, y: 0, width: 0, height: 0 }
   private webAreaSynced = false // 渲染进程是否已上报过真实矩形
   private tabsPushTimer: NodeJS.Timeout | null = null // 标签推送节流定时器
+  private sessionPersistTimer: NodeJS.Timeout | null = null // 会话存档防抖定时器
+  private sessionFinalized = false // 已做过退出前最后一次存档
   // 当前主题模式：THEME_SET 时更新并同步原生按钮配色；新页面挂载经 THEME_GET 对齐
   private theme: ThemeMode = 'dark'
+  // 独立窗口：把标签页弹出成真正的 OS 窗口，多屏时可以各显示一份内容
+  private popout: PopoutWindowManager
 
   constructor(db: Database) {
     this.db = db
     this.window = this.createWindow()
+    this.popout = this.createPopoutManager()
     // 按持久化的空间列表（含自定义空间）初始化标签管理器
     const spaces = loadSpaces(db)
     this.activeSpace = spaces[0]?.id ?? ''
     for (const space of spaces) {
       this.createTabManagerFor(space)
     }
+    this.restoreSession()
     this.setupWindowEvents()
+  }
+
+  /**
+   * 恢复上次的会话：标签页 + 独立窗口（含它们各自在哪块屏幕上）
+   *
+   * 多屏用户的诉求是「每块屏幕放不同的内容」，只恢复标签不够——
+   * 窗口位置（属于哪块显示器）一并记住，重启后直接摆回原处。
+   * 页面内的 JS 状态不恢复（那需要重建 WebContents），只保证「打开的东西还在、摆的位置还在」。
+   */
+  private restoreSession(): void {
+    try {
+      if (!isSessionRestoreEnabled(this.db)) return
+      const session = sanitizeSession(getSession(this.db), {
+        spaceIds: Array.from(this.tabManagers.keys()),
+      })
+      if (session.tabs.length === 0) return
+
+      for (const [spaceId, tm] of this.tabManagers) {
+        for (const saved of tabsForSpace(session.tabs, spaceId)) {
+          // 已弹出的标签先不激活（随后会开独立窗口）；id 沿用存档值，窗口归属才对得上
+          tm.createTab(saved.url, saved.isActive && !saved.poppedOut, saved.id)
+        }
+      }
+
+      // 当前空间若没有活动标签（存档里的活动标签已弹出/缺失），退到最后一个未弹出的
+      const activeTm = this.tabManagers.get(this.activeSpace)
+      if (activeTm && !activeTm.getActiveTabId()) activeTm.showActive()
+
+      let restoredWindows = 0
+      const restorableIds = session.tabs.map((t) => t.id)
+      for (const w of windowsForRestoredTabs(session.windows, restorableIds)) {
+        // 只恢复确实还在的标签（存档里指向已失效标签的 id 直接丢掉）
+        const tabIds = w.tabIds.filter((id) => this.getTabManagerForTab(id))
+        if (tabIds.length === 0) continue
+        const res = this.popout.restoreWindow(w.id, tabIds, w.activeTabId, w.bounds)
+        if (res.success) restoredWindows += 1
+      }
+      console.log(`[session] 恢复 ${session.tabs.length} 个标签、${restoredWindows} 个独立窗口`)
+    } catch (err) {
+      // 恢复失败不能影响启动：最坏情况就是回到「只开一个导航页」
+      console.error('[session] 会话恢复失败，回退到默认导航页：', err)
+    }
+  }
+
+  /**
+   * 保存会话（标签变更 / 独立窗口增减后延迟写入，避免每帧写库）
+   */
+  private scheduleSessionPersist(): void {
+    if (this.sessionPersistTimer) return
+    this.sessionPersistTimer = setTimeout(() => {
+      this.sessionPersistTimer = null
+      this.persistSessionNow()
+    }, 1500)
+  }
+
+  /**
+   * 退出前最后一次保存，并锁住存档
+   *
+   * 锁住的原因：关主窗口时会先存档（此时独立窗口还开着，能记住它们的位置），
+   * 随后才销毁独立窗口；若不锁，后续 window-all-closed / before-quit 再存一次，
+   * 就会把「窗口已经没了」写进存档，下次启动什么都不恢复。
+   */
+  finalizeSession(): void {
+    this.persistSessionNow()
+    this.sessionFinalized = true
+  }
+
+  /** 立即落盘（退出前调用，否则最后一次改动可能还没到 debounce 时间） */
+  persistSessionNow(): void {
+    if (this.sessionFinalized) return
+    try {
+      if (this.sessionPersistTimer) {
+        clearTimeout(this.sessionPersistTimer)
+        this.sessionPersistTimer = null
+      }
+      const tabs: SessionTab[] = []
+      for (const tm of this.tabManagers.values()) {
+        tabs.push(...tm.snapshotTabs())
+      }
+      // 标注每个标签属于哪个独立窗口（重启后要把整组标签摆回同一个窗口）
+      for (const tab of tabs) {
+        const windowId = this.popout.windowIdOf(tab.id)
+        if (windowId) tab.windowId = windowId
+      }
+      setSession(this.db, buildSession(tabs, this.popout.snapshotWindows()))
+    } catch (err) {
+      console.error('[session] 保存会话失败：', err)
+    }
   }
 
   /** 为单个空间创建标签管理器（启动与新增空间共用） */
@@ -73,7 +182,14 @@ export class MainWindowManager {
           this.attachPageTracker(tabId, webContents, spaceId)
           this.attachContextMenu(webContents)
         },
+        // 标签被关掉时，它若已弹出为独立窗口，先把那个窗口收掉（不还原标签）
+        onBeforeTabClosed: (tabId) => this.popout.discard(tabId),
         onTabClosed: (tabId) => this.detachPageTracker(tabId),
+        // 已弹出的标签里开新页（window.open / target=_blank）：开在**同一个独立窗口**里
+        onPopoutNewTab: (sourceTabId, newTabId) => {
+          const windowId = this.popout.windowIdOf(sourceTabId)
+          if (windowId) this.popout.addTabToWindow(windowId, newTabId)
+        },
         onTabsChanged: (spaceId) => this.broadcastTabs(spaceId),
       },
       // 搜索词按设置里的默认搜索引擎转换（实时读取，改完即生效）
@@ -81,6 +197,80 @@ export class MainWindowManager {
     })
     this.tabManagers.set(space.id, tm)
     return tm
+  }
+
+  /**
+   * 在指定独立窗口里新开一页（窗口「+」与 Ctrl+T 共用）
+   *
+   * 新标签建在窗口内第一个标签所属的空间里（一个窗口不跨空间混装），
+   * 然后直接并进该窗口，绝不会跑到主窗口去。
+   */
+  newTabInPopoutWindow(windowId: string, url?: string): string | null {
+    const first = this.popout.listTabs(windowId).tabs[0]
+    const tm = first
+      ? (this.getTabManagerForTab(first.tabId) ?? this.getTabManager())
+      : this.getTabManager()
+    const tab = tm.createTab(url, false)
+    const ok = this.popout.addTabToWindow(windowId, tab.id)
+    return ok ? tab.id : null
+  }
+
+  /**
+   * 独立窗口管理器
+   *
+   * 标签分散在各个空间里，弹出/收回都要先定位它属于哪个空间，这里统一兜住；
+   * 变化同时广播标签列表（标签上的 🪟 标记）与独立窗口列表。
+   */
+  private createPopoutManager(): PopoutWindowManager {
+    const findOwner = (tabId: string): { tm: TabManager; spaceId: SpaceId } | null => {
+      for (const [spaceId, tm] of this.tabManagers) {
+        if (tm.hasTab(tabId)) return { tm, spaceId }
+      }
+      return null
+    }
+
+    return new PopoutWindowManager(
+      {
+        findTab: (tabId) => {
+          const owner = findOwner(tabId)
+          if (!owner) return null
+          const tab = owner.tm.getAllTabs().find((t) => t.id === tabId)
+          return { spaceId: owner.spaceId, title: tab?.title ?? '', url: tab?.url ?? '' }
+        },
+        detachTab: (tabId) => {
+          const owner = findOwner(tabId)
+          return owner ? owner.tm.detachForPopout(tabId) : null
+        },
+        restoreTab: (tabId, makeActive) => {
+          const owner = findOwner(tabId)
+          if (!owner) return
+          // 只有当前前台空间的标签才立刻挂回主窗口；其它空间清标记即可，
+          // 否则会把别的空间的内容盖在当前空间上
+          if (owner.spaceId === this.activeSpace) owner.tm.attachFromPopout(tabId, makeActive)
+          else owner.tm.markReturnedFromPopout(tabId)
+        },
+        notifyChanged: () => {
+          this.broadcastTabs(this.activeSpace)
+          this.broadcastPopouts()
+          // 独立窗口增减/页面跳转也要记进会话（窗口位置靠它还原）
+          this.scheduleSessionPersist()
+        },
+      },
+      this.db
+    )
+  }
+
+  /** 供 IPC 层读写独立窗口 */
+  getPopoutManager(): PopoutWindowManager {
+    return this.popout
+  }
+
+  /** 向渲染进程推送最新的独立窗口列表 */
+  private broadcastPopouts(): void {
+    if (this.window.isDestroyed()) return
+    this.window.webContents.send(IPC_CHANNELS.WINDOWS_UPDATED, {
+      windows: this.popout.list(),
+    })
   }
 
   // ---------- 自定义空间 ----------
@@ -181,8 +371,9 @@ export class MainWindowManager {
 
     this.window.once('ready-to-show', () => {
       this.applyWebAreaBounds()
-      const tm = this.tabManagers.get(this.activeSpace)!
-      tm.createTab()
+      const tm = this.tabManagers.get(this.activeSpace)
+      // 会话已恢复时不要再补一个导航页；只有该空间确实一个标签都没有才补
+      if (tm && !tm.hasAnyTab()) tm.createTab()
     })
   }
 
@@ -213,20 +404,30 @@ export class MainWindowManager {
    */
   private attachContextMenu(webContents: WebContents): void {
     webContents.on('context-menu', (_event, params: ContextMenuParams) => {
+      // 右键发生在哪个窗口，菜单就弹在哪个窗口：独立窗口里右键不能弹回主窗口
+      const ownerWindow = this.windowOfWebContents(webContents) ?? this.window
       const menu = buildWebContextMenu(params, {
-        window: this.window,
+        window: ownerWindow,
         webContents,
         onAnalyzeSelection: (text, url) => {
           this.analyzeSelection(text, webContents.getTitle() || '选中文本', url)
         },
         onOpenLink: (url, background) => {
-          const tm = this.tabManagers.get(this.activeSpace)
-          if (tm) tm.createTab(url, !background)
+          // 从哪个标签发起，新页就开在哪：
+          // 独立窗口里右键「在新标签打开」要留在这个窗口，而不是跑到主窗口去
+          const sourceTabId = this.findTabIdByWebContents(webContents)
+          const sourceWindowId = sourceTabId ? this.popout.windowIdOf(sourceTabId) : null
+          const tm =
+            (sourceTabId ? this.getTabManagerForTab(sourceTabId) : null) ??
+            this.tabManagers.get(this.activeSpace)
+          if (!tm) return
+          const tab = tm.createTab(url, !background && !sourceWindowId)
+          if (sourceWindowId) this.popout.addTabToWindow(sourceWindowId, tab.id, !background)
         },
         onAnalyzeLink: (url) => this.analyzeLink(url),
         onAddLinkToWatch: (symbol) => this.addLinkToWatch(symbol),
       })
-      menu.popup({ window: this.window })
+      menu.popup({ window: ownerWindow })
     })
   }
 
@@ -335,6 +536,41 @@ export class MainWindowManager {
     return tm
   }
 
+  /**
+   * 按 tabId 找到它所属空间的标签管理器（跨空间操作用，如独立窗口里的导航）
+   * 找不到返回 null，调用方自行决定降级策略。
+   */
+  getTabManagerForTab(tabId: string): TabManager | null {
+    for (const tm of this.tabManagers.values()) {
+      if (tm.hasTab(tabId)) return tm
+    }
+    return null
+  }
+
+  /**
+   * 按 WebContents 反查标签 id
+   *
+   * 独立窗口（以及标签里的导航首页）发起的 IPC 请求（导航、新建标签、前进后退）
+   * 必须作用在「发出请求的那个标签」上，而不是主窗口的当前标签——
+   * 否则用户在独立窗口里点书签/搜索，页面会打开到主窗口去。
+   */
+  findTabIdByWebContents(wc: WebContents): string | null {
+    for (const tm of this.tabManagers.values()) {
+      const id = tm.findTabIdByWebContents(wc)
+      if (id) return id
+    }
+    return null
+  }
+
+  /** 该 WebContents 显示在哪个窗口里（主窗口或某个独立窗口） */
+  windowOfWebContents(wc: WebContents): BrowserWindow | null {
+    const tabId = this.findTabIdByWebContents(wc)
+    if (!tabId) return null
+    const windowId = this.popout.windowIdOf(tabId)
+    if (!windowId) return this.window
+    return this.popout.windowOf(windowId) ?? this.window
+  }
+
   getWebAreaBounds(): WebAreaBounds {
     return this.webAreaSynced ? { ...this.webArea } : this.fallbackBounds()
   }
@@ -403,6 +639,8 @@ export class MainWindowManager {
    * 避免 SPA 站点频繁触发 did-navigate 时刷爆 IPC
    */
   private broadcastTabs(spaceId: SpaceId): void {
+    // 任何标签变化都顺带排一次会话存档（增删/改名/跳转都算变化）
+    this.scheduleSessionPersist()
     if (spaceId !== this.activeSpace) return
     if (this.tabsPushTimer) return
 

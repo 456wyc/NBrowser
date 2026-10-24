@@ -45,7 +45,7 @@ export function defaultLayout(): LayoutState {
     sidebarVisible: true,
     sidebarWidth: SIDEBAR.defaultWidth,
     panelVisible: false,
-    panelTab: 'ai',
+    panelTab: 'research',
     panelWidth: PANEL.defaultWidth,
     dockVisible: false,
     dockTab: 'visits',

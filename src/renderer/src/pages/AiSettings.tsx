@@ -14,6 +14,7 @@ export function AiSettingsPage() {
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState('')
+  const [fastModel, setFastModel] = useState('')
   const [hasApiKey, setHasApiKey] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -25,6 +26,7 @@ export function AiSettingsPage() {
         const res = await window.electronAPI.invoke(IPC_CHANNELS.AI_GET_CONFIG, {})
         setBaseUrl(res.baseUrl)
         setModel(res.model)
+        setFastModel(res.fastModel || '')
         setHasApiKey(res.hasApiKey)
       } catch (err) {
         console.error('Failed to load AI config:', err)
@@ -43,6 +45,8 @@ export function AiSettingsPage() {
         // 留空表示不修改已保存的 Key
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         model,
+        // 留空 = 关闭模型路由（AI 助手所有请求都走主模型）
+        fastModel,
       })
       setApiKey('')
       setHasApiKey(true)
@@ -103,6 +107,28 @@ export function AiSettingsPage() {
           onChange={(e) => setModel(e.target.value)}
           placeholder="gpt-4o-mini"
         />
+        <div style={styles.fieldHint}>
+          主模型：页面整理、深度研究、AI 助手的数据查询与写操作都走它。
+        </div>
+      </div>
+
+      <div style={styles.field}>
+        <label style={styles.label}>
+          轻量模型（可选）
+          {fastModel.trim() && <span style={styles.keyStatus}>· 路由已启用</span>}
+        </label>
+        <input
+          className="field"
+          style={styles.fieldWide}
+          value={fastModel}
+          onChange={(e) => setFastModel(e.target.value)}
+          placeholder="如 gpt-4o-mini / deepseek-chat / qwen-turbo，留空关闭"
+        />
+        <div style={styles.fieldHint}>
+          模型路由：AI 助手会先用轻量模型判断本轮意图——简单问答（概念解释、闲聊）由它直接回答，
+          更快更便宜；需要查行情/自选/持仓/笔记或联网检索时仍走主模型，能力不受影响。
+          填同一厂商的更便宜型号即可（复用上面的 Base URL 与 Key）。
+        </div>
       </div>
 
       <div style={styles.field}>
@@ -155,6 +181,7 @@ const styles: Record<string, React.CSSProperties> = {
   label: { display: 'block', fontSize: 13, color: 'var(--subtext0)', marginBottom: 6 },
   keyStatus: { marginLeft: 6, fontSize: 11, color: 'var(--green)' },
   fieldWide: { width: '100%' },
+  fieldHint: { fontSize: 11, color: 'var(--overlay0)', lineHeight: 1.6, marginTop: 5 },
   presetRow: { display: 'flex', gap: 8, flexWrap: 'wrap' },
   actions: { display: 'flex', alignItems: 'center', gap: 12, marginTop: 24 },
   note: {

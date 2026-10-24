@@ -101,11 +101,12 @@ export class AiService {
   /**
    * 读取 LLM 配置（不下发 apiKey 明文，只告知是否已配置）
    */
-  getPublicConfig(): { baseUrl: string; model: string; hasApiKey: boolean } {
+  getPublicConfig(): { baseUrl: string; model: string; fastModel: string; hasApiKey: boolean } {
     const cfg = getConfig()
     return {
       baseUrl: cfg.llm.baseUrl,
       model: cfg.llm.model,
+      fastModel: cfg.llm.fastModel || '',
       hasApiKey: Boolean(cfg.llm.apiKey),
     }
   }
@@ -113,13 +114,15 @@ export class AiService {
   /**
    * 更新 LLM 配置（局部更新，未提供的字段保持不变）
    */
-  setConfig(params: { baseUrl?: string; apiKey?: string; model?: string }): void {
+  setConfig(params: { baseUrl?: string; apiKey?: string; model?: string; fastModel?: string }): void {
     const current = getConfig()
     updateConfig({
       llm: {
         baseUrl: params.baseUrl?.trim() || current.llm.baseUrl,
         apiKey: params.apiKey !== undefined ? params.apiKey.trim() : current.llm.apiKey,
         model: params.model?.trim() || current.llm.model,
+        // 轻量模型可随时清空（留空 = 关闭路由），清空时不能回退成主模型
+        fastModel: params.fastModel !== undefined ? params.fastModel.trim() : current.llm.fastModel,
       },
     })
   }

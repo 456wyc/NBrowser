@@ -1,5 +1,6 @@
 import { Menu, MenuItemConstructorOptions, clipboard } from 'electron'
 import type { WebContents, BrowserWindow, ContextMenuParams } from 'electron'
+import type { PopoutWindowInfo } from '@shared/ipc'
 import { extractStockFromUrl, extractStockFromText } from './stock-extractor'
 
 export interface TabContextMenuDeps {
@@ -8,10 +9,20 @@ export interface TabContextMenuDeps {
   tabUrl: string
   canCloseOthers: boolean
   canCloseRight: boolean
+  /** 该标签是否已经弹出为独立窗口（决定菜单项是「弹出」还是「收回」） */
+  poppedOut?: boolean
+  /** 已存在的独立窗口（用于「弹出到已有窗口」） */
+  popoutWindows?: PopoutWindowInfo[]
   onReload: (tabId: string) => void
   onClose: (tabId: string) => void
   onCloseOthers: (tabId: string) => void
   onCloseRight: (tabId: string) => void
+  /** 弹出为新的独立窗口（可拖到另一块屏幕） */
+  onPopout: (tabId: string) => void
+  /** 弹到**已有**的独立窗口里，成为那个窗口的新一页 */
+  onPopoutTo: (tabId: string, windowId: string) => void
+  /** 从独立窗口收回主窗口 */
+  onReturnToMain: (tabId: string) => void
 }
 
 /**
@@ -19,6 +30,8 @@ export interface TabContextMenuDeps {
  * 渲染进程无法直接使用 Electron 的 Menu，因此由主进程构建并弹出。
  */
 export function buildTabContextMenu(deps: TabContextMenuDeps): Menu {
+  // 已存在的独立窗口：让标签能并进已有窗口，而不是每次都多开一个 OS 窗口
+  const windows = deps.popoutWindows ?? []
   const items: MenuItemConstructorOptions[] = [
     {
       label: '重新加载',
@@ -29,6 +42,33 @@ export function buildTabContextMenu(deps: TabContextMenuDeps): Menu {
       enabled: Boolean(deps.tabUrl),
       click: () => clipboard.writeText(deps.tabUrl),
     },
+    { type: 'separator' },
+    ...(deps.poppedOut
+      ? [
+          {
+            label: '🪟 收回主窗口',
+            click: () => deps.onReturnToMain(deps.tabId),
+          },
+        ]
+      : [
+          {
+            label: '🪟 弹出为新的独立窗口',
+            click: () => deps.onPopout(deps.tabId),
+          },
+          // 已有窗口：直接并进去，省得每次都多一个 OS 窗口
+          ...(windows.length > 0
+            ? [
+                {
+                  label: `🪟 弹到已有独立窗口（${windows.length}）`,
+                  submenu: windows.map((w) => ({
+                    label: `${w.title || '牛Browser'} · ${w.tabCount} 页`,
+                    toolTip: w.url,
+                    click: () => deps.onPopoutTo(deps.tabId, w.windowId),
+                  })),
+                },
+              ]
+            : []),
+        ]),
     { type: 'separator' },
     {
       label: '关闭',

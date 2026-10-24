@@ -1,11 +1,32 @@
-import { useState } from 'react'
-import { IPC_CHANNELS, type Tab } from '@shared/ipc'
+import { useEffect, useState } from 'react'
+import { IPC_CHANNELS, type PopoutWindowInfo, type Tab } from '@shared/ipc'
 import { useTabs } from '../hooks/useTabs'
 
 export function TabBar() {
   const { tabs, activeTabId } = useTabs()
   const [dragId, setDragId] = useState<string | null>(null)
   const [overId, setOverId] = useState<string | null>(null)
+  // 已弹出的标签不属于主窗口：只在对应的独立窗口里显示，主窗口标签栏只列自己的标签，
+  // 否则「在弹窗里新建/打开的页」会同时出现在主窗口标签栏，看起来像开到了主窗口。
+  // （独立窗口仍可通过 🪟 N 角标统一收回主窗口）
+  const visibleTabs = tabs.filter((t) => !t.poppedOut)
+  // 已弹出的独立窗口（多屏时每块屏幕可以放一个）
+  const [popouts, setPopouts] = useState<PopoutWindowInfo[]>([])
+
+  useEffect(() => {
+    window.electronAPI
+      .invoke(IPC_CHANNELS.WINDOWS_GET_ALL, {})
+      .then((res) => setPopouts(res.windows))
+      .catch(() => {
+        /* 读不到就不显示角标，不影响标签栏 */
+      })
+    const off = window.electronAPI.onPopoutWindowsUpdated((payload) => setPopouts(payload.windows))
+    return off
+  }, [])
+
+  const handleCloseAllPopouts = async () => {
+    await window.electronAPI.invoke(IPC_CHANNELS.WINDOWS_CLOSE_ALL, {})
+  }
 
   const handleNewTab = async () => {
     await window.electronAPI.invoke(IPC_CHANNELS.TABS_CREATE, { active: true })
@@ -16,7 +37,13 @@ export function TabBar() {
     await window.electronAPI.invoke(IPC_CHANNELS.TABS_CLOSE, { tabId })
   }
 
+  // 已弹出的标签不在主窗口里渲染：点它是唤醒那个独立窗口
   const handleSwitchTab = async (tabId: string) => {
+    const tab = tabs.find((t) => t.id === tabId)
+    if (tab?.poppedOut) {
+      await window.electronAPI.invoke(IPC_CHANNELS.WINDOWS_FOCUS, { tabId })
+      return
+    }
     await window.electronAPI.invoke(IPC_CHANNELS.TABS_SWITCH, { tabId })
   }
 
@@ -57,11 +84,11 @@ export function TabBar() {
     setOverId(null)
     if (!sourceId || sourceId === targetId) return
 
-    const from = tabs.findIndex((t) => t.id === sourceId)
-    const to = tabs.findIndex((t) => t.id === targetId)
+    const from = visibleTabs.findIndex((t) => t.id === sourceId)
+    const to = visibleTabs.findIndex((t) => t.id === targetId)
     if (from < 0 || to < 0) return
 
-    const next = tabs.slice()
+    const next = visibleTabs.slice()
     const [moved] = next.splice(from, 1)
     next.splice(to, 0, moved)
 
@@ -99,7 +126,7 @@ export function TabBar() {
 
       {/* 标签列表（可滚动区域；「+」固定在外面，永远可见） */}
       <div style={styles.tabList} className="no-drag">
-        {tabs.map((tab) => (
+        {visibleTabs.map((tab) => (
           <div
             key={tab.id}
             draggable
@@ -117,6 +144,7 @@ export function TabBar() {
             onAuxClick={(e) => handleAuxClick(e, tab.id)}
             onContextMenu={(e) => handleContextMenu(e, tab.id)}
             onClick={() => handleSwitchTab(tab.id)}
+            title={tab.poppedOut ? '已在独立窗口中打开，点击唤醒该窗口' : undefined}
             className={
               'tab' +
               (tab.id === activeTabId ? ' active' : '') +
@@ -124,8 +152,11 @@ export function TabBar() {
               (overId === tab.id && dragId !== tab.id ? ' over' : '')
             }
           >
+            {tab.poppedOut && <span style={styles.poppedBadge}>🪟</span>}
             {tab.symbol && <span style={styles.tabSymbol}>{tab.symbol.split('.')[0]}</span>}
-            <span style={styles.tabTitle}>{truncate(tab.title || tab.url, 24)}</span>
+            <span style={{ ...styles.tabTitle, ...(tab.poppedOut ? styles.tabTitlePopped : {}) }}>
+              {truncate(tab.title || tab.url, 24)}
+            </span>
             <button
               onClick={(e) => handleCloseTab(e, tab.id)}
               className="tab-close"
@@ -144,6 +175,16 @@ export function TabBar() {
       >
         +
       </button>
+      {popouts.length > 0 && (
+        <button
+          onClick={handleCloseAllPopouts}
+          className="icon-btn no-drag"
+          style={styles.popoutChip}
+          title={`已弹出 ${popouts.length} 个独立窗口，点击全部收回主窗口`}
+        >
+          🪟 {popouts.length}
+        </button>
+      )}
       {/* 右侧留白：拖动/双击可移动和最大化窗口 */}
       <div className="drag-region" style={styles.dragSpacer} />
     </div>
@@ -191,5 +232,8 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap',
   },
   newTabBtn: { flexShrink: 0 },
+  poppedBadge: { fontSize: 11, flexShrink: 0 },
+  tabTitlePopped: { opacity: 0.65, fontStyle: 'italic' },
+  popoutChip: { flexShrink: 0, fontSize: 11 },
   dragSpacer: { flex: 1, alignSelf: 'stretch' },
 }

@@ -1,6 +1,7 @@
 import type { Database } from 'sql.js'
 import { DEFAULT_CALENDAR, type TradingCalendarConfig } from '../quote/trading-calendar'
 import { DEFAULT_SEARCH_TEMPLATE } from '@shared/url'
+import { emptySession, type BrowserSession } from '@shared/session-restore'
 import type { Space } from '@shared/ipc'
 
 /**
@@ -54,6 +55,49 @@ export function getSearchEngineTemplate(db: Database): string {
  */
 export function setSearchEngineTemplate(db: Database, template: string): void {
   setSetting(db, 'search_engine_template', template)
+}
+
+// ---------- 会话存档（标签页 + 独立窗口，用于重启恢复） ----------
+
+const SESSION_KEY = 'browser.session'
+const SESSION_RESTORE_KEY = 'session.restore'
+
+/**
+ * 读取会话存档
+ * 解析失败一律返回空会话（存档坏了宁可不恢复，也不能让启动失败）
+ */
+export function getSession(db: Database): BrowserSession {
+  const val = getSetting(db, SESSION_KEY)
+  if (!val) return emptySession()
+  try {
+    const parsed = JSON.parse(val)
+    if (!parsed || typeof parsed !== 'object') return emptySession()
+    return {
+      tabs: Array.isArray(parsed.tabs) ? parsed.tabs : [],
+      windows: Array.isArray(parsed.windows) ? parsed.windows : [],
+    }
+  } catch (err) {
+    console.error('[session] 会话存档解析失败，本次不恢复：', err)
+    return emptySession()
+  }
+}
+
+export function setSession(db: Database, session: BrowserSession): void {
+  try {
+    setSetting(db, SESSION_KEY, JSON.stringify(session))
+  } catch (err) {
+    console.error('[session] 会话存档写入失败：', err)
+  }
+}
+
+/** 启动时是否恢复上次的标签页与独立窗口（默认开启） */
+export function isSessionRestoreEnabled(db: Database): boolean {
+  const val = getSetting(db, SESSION_RESTORE_KEY)
+  return val === null ? true : val === '1'
+}
+
+export function setSessionRestoreEnabled(db: Database, enabled: boolean): void {
+  setSetting(db, SESSION_RESTORE_KEY, enabled ? '1' : '0')
 }
 
 // ---------- 空间配置（JSON 存 settings，首读为空时回退内置三空间） ----------

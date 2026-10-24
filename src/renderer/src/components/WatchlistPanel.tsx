@@ -9,7 +9,14 @@ import {
 import { useQuotes } from '../hooks/useQuotes'
 import { useToast } from '../hooks/useToast'
 import { normalizeSymbol, eastmoneyQuoteUrl } from '@shared/stock-market'
+import { quoteSourceLabel } from '@shared/quote-source'
 import { matchSmartGroup, GROUP_ALL, GROUP_UNGROUPED } from '@shared/watchlist-groups'
+import {
+  splitSearchTerms,
+  mergeBatchCandidates,
+  defaultBatchSelection,
+  type BatchCandidate,
+} from '@shared/watchlist-batch'
 
 interface WatchlistPanelProps {
   // 当前页面识别出的股票代码（来自 activity tab 的 URL）
@@ -24,6 +31,11 @@ export function WatchlistPanel({ pageSymbol }: WatchlistPanelProps) {
   const [searchKeyword, setSearchKeyword] = useState('')
   const [searchResults, setSearchResults] = useState<StockSearchResult[]>([])
   const [searching, setSearching] = useState(false)
+  // 批量添加（多关键词）：候选列表 / 勾选 / 未命中词
+  const [batchCandidates, setBatchCandidates] = useState<BatchCandidate[]>([])
+  const [batchSelected, setBatchSelected] = useState<Set<number>>(new Set())
+  const [batchMissing, setBatchMissing] = useState<string[]>([])
+  const [batchAdding, setBatchAdding] = useState(false)
   const [addingFromPage, setAddingFromPage] = useState(false)
   const [hoverSymbol, setHoverSymbol] = useState<string | null>(null)
   const [dragSymbol, setDragSymbol] = useState<string | null>(null)
@@ -44,7 +56,14 @@ export function WatchlistPanel({ pageSymbol }: WatchlistPanelProps) {
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const groupMenuRef = useRef<HTMLDivElement>(null)
 
-  const { quotes, error: quoteError, loading: quotesLoading, refresh } = useQuotes()
+  const {
+    quotes,
+    error: quoteError,
+    loading: quotesLoading,
+    source: quoteSource,
+    degraded: quoteDegraded,
+    refresh,
+  } = useQuotes()
 
   // 加载自选股列表
   const loadWatchlist = async () => {
@@ -84,10 +103,13 @@ export function WatchlistPanel({ pageSymbol }: WatchlistPanelProps) {
     return () => document.removeEventListener('mousedown', onDown)
   }, [groupMenuSymbol])
 
-  // 搜索防抖
+  // 搜索防抖：单关键词走原来的结果下拉；多关键词（空格/逗号分隔）走批量候选模式
   useEffect(() => {
-    if (!searchKeyword.trim()) {
+    const terms = splitSearchTerms(searchKeyword)
+    if (terms.length === 0) {
       setSearchResults([])
+      setBatchCandidates([])
+      setBatchMissing([])
       return
     }
     if (searchTimerRef.current) {
@@ -96,13 +118,41 @@ export function WatchlistPanel({ pageSymbol }: WatchlistPanelProps) {
     searchTimerRef.current = setTimeout(async () => {
       setSearching(true)
       try {
-        const res = await window.electronAPI.invoke(IPC_CHANNELS.WATCHLIST_SEARCH, {
-          keyword: searchKeyword.trim(),
-        })
-        setSearchResults(res.results)
+        if (terms.length === 1) {
+          // 单关键词：保持原有「点击即添加」的下拉体验
+          setBatchCandidates([])
+          setBatchMissing([])
+          const res = await window.electronAPI.invoke(IPC_CHANNELS.WATCHLIST_SEARCH, {
+            keyword: terms[0],
+          })
+          setSearchResults(res.results)
+        } else {
+          // 多关键词：并行检索 → 合并去重 → 候选预览（已在自选的默认不勾选）
+          setSearchResults([])
+          const perTerm = await Promise.all(
+            terms.map(async (term) => {
+              try {
+                const res = await window.electronAPI.invoke(IPC_CHANNELS.WATCHLIST_SEARCH, {
+                  keyword: term,
+                })
+                return { term, results: res.results }
+              } catch {
+                return { term, results: [] as StockSearchResult[] }
+              }
+            })
+          )
+          const candidates = mergeBatchCandidates(
+            perTerm,
+            items.map((i) => i.symbol)
+          )
+          setBatchCandidates(candidates)
+          setBatchSelected(defaultBatchSelection(candidates))
+          setBatchMissing(perTerm.filter((t) => t.results.length === 0).map((t) => t.term))
+        }
       } catch (err) {
         console.error('Search failed:', err)
         setSearchResults([])
+        setBatchCandidates([])
       } finally {
         setSearching(false)
       }
@@ -110,7 +160,8 @@ export function WatchlistPanel({ pageSymbol }: WatchlistPanelProps) {
     return () => {
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
     }
-  }, [searchKeyword])
+    // items 参与依赖：新增自选后重新输入时，「已在自选」状态才是最新的
+  }, [searchKeyword, items])
 
   // 当前选中分组是否为可拖拽排序（智能分组不可）
   const activeGroupObj = groups.find((g) => g.id === activeGroup) || null
@@ -158,6 +209,42 @@ export function WatchlistPanel({ pageSymbol }: WatchlistPanelProps) {
     setSearchResults([])
     setShowSearch(false)
     loadWatchlist()
+  }
+
+  // 批量添加勾选的候选（add 幂等：重复代码返回已存在记录，不会产生重复行）
+  const handleBatchAdd = async () => {
+    const picked = batchCandidates.filter((_, i) => batchSelected.has(i) && !_.alreadyIn)
+    if (picked.length === 0 || batchAdding) return
+    setBatchAdding(true)
+    let added = 0
+    let failed = 0
+    try {
+      for (const c of picked) {
+        try {
+          await window.electronAPI.invoke(IPC_CHANNELS.WATCHLIST_ADD, {
+            symbol: c.symbol,
+            name: c.name,
+            groupId: targetGroupId,
+          })
+          added++
+        } catch (err) {
+          failed++
+          console.error(`[watchlist] 批量添加失败：${c.symbol}`, err)
+        }
+      }
+      await loadWatchlist()
+      const parts = [`已添加 ${added} 只`]
+      if (failed > 0) parts.push(`${failed} 只失败`)
+      showToast(parts.join('，'))
+      // 清空输入与候选，回到初始态
+      setSearchKeyword('')
+      setBatchCandidates([])
+      setBatchSelected(new Set())
+      setBatchMissing([])
+      setShowSearch(false)
+    } finally {
+      setBatchAdding(false)
+    }
   }
 
   // 删除自选股
@@ -590,7 +677,10 @@ export function WatchlistPanel({ pageSymbol }: WatchlistPanelProps) {
             style={{ width: '100%' }}
             value={searchKeyword}
             onChange={(e) => setSearchKeyword(e.target.value)}
-            placeholder="输入代码或名称搜索"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setShowSearch(false)
+            }}
+            placeholder="输入代码或名称，多个用空格分隔"
             autoFocus
           />
           {searching && <div style={styles.searching}>搜索中...</div>}
@@ -609,6 +699,90 @@ export function WatchlistPanel({ pageSymbol }: WatchlistPanelProps) {
               ))}
             </div>
           )}
+
+          {/* 批量候选（多关键词时出现）：勾选后一次添加 */}
+          {batchCandidates.length > 0 && (
+            <div style={styles.batchBox}>
+              <div style={styles.batchHead}>
+                <span style={styles.batchTitle}>
+                  找到 {batchCandidates.length} 只（勾选 {batchSelected.size}）
+                </span>
+                <div style={{ flex: 1 }} />
+                <button
+                  className="chip"
+                  style={styles.batchToggleAll}
+                  onClick={() =>
+                    setBatchSelected((cur) =>
+                      cur.size ===
+                      batchCandidates.filter((c) => !c.alreadyIn).length
+                        ? new Set()
+                        : defaultBatchSelection(batchCandidates)
+                    )
+                  }
+                >
+                  {batchSelected.size === batchCandidates.filter((c) => !c.alreadyIn).length
+                    ? '全不选'
+                    : '全选'}
+                </button>
+              </div>
+              {batchMissing.length > 0 && (
+                <div style={styles.batchMissing}>未找到：{batchMissing.join('、')}</div>
+              )}
+              <div style={styles.batchList}>
+                {batchCandidates.map((c, i) => (
+                  <label
+                    key={c.symbol}
+                    style={{
+                      ...styles.batchItem,
+                      ...(c.alreadyIn ? styles.batchItemDisabled : {}),
+                      ...(batchSelected.has(i) ? styles.batchItemSel : {}),
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      className="checkbox"
+                      checked={batchSelected.has(i)}
+                      disabled={c.alreadyIn}
+                      onChange={() =>
+                        setBatchSelected((cur) => {
+                          const next = new Set(cur)
+                          if (next.has(i)) next.delete(i)
+                          else next.add(i)
+                          return next
+                        })
+                      }
+                    />
+                    <span style={styles.batchItemName}>{c.name}</span>
+                    <span style={styles.batchItemCode}>{c.symbol}</span>
+                    {c.matchedTerms.length > 1 && (
+                      <span style={styles.batchItemTerms} title={`命中关键词：${c.matchedTerms.join('、')}`}>
+                        {c.matchedTerms.length} 词命中
+                      </span>
+                    )}
+                    {c.alreadyIn && <span style={styles.batchItemIn}>已在自选</span>}
+                  </label>
+                ))}
+              </div>
+              <button
+                onClick={handleBatchAdd}
+                disabled={batchAdding || batchSelected.size === 0}
+                className="btn-primary"
+                style={styles.batchAddBtn}
+              >
+                {batchAdding ? '添加中…' : `添加选中 (${batchSelected.size})`}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 数据源降级：所选数据源连续失败后已自动切回东财保底，必须让用户看见 */}
+      {quoteDegraded && (
+        <div
+          style={styles.degradedBanner}
+          title={`所选数据源连续拉取失败，已自动切回「${quoteSourceLabel(quoteSource)}」保底。可在「设置 → 行情数据源」重新测试并保存`}
+        >
+          ⚠️ 数据源已自动降级到「{quoteSourceLabel(quoteSource)}」，行情可能延迟
         </div>
       )}
 
@@ -1002,6 +1176,47 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid var(--border-strong)',
     borderRadius: 6,
   },
+  batchBox: {
+    marginTop: 6,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+  },
+  batchHead: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  batchTitle: { fontSize: 11, color: 'var(--subtext0)' },
+  batchToggleAll: { fontSize: 10, padding: '2px 8px' },
+  batchMissing: { fontSize: 11, color: 'var(--yellow)' },
+  batchList: {
+    maxHeight: 180,
+    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    background: 'var(--bg-base)',
+    border: '1px solid var(--border-strong)',
+    borderRadius: 6,
+    padding: 4,
+  },
+  batchItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '5px 8px',
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontSize: 12,
+  },
+  batchItemSel: { background: 'rgba(var(--blue-rgb), 0.12)' },
+  batchItemDisabled: { opacity: 0.55, cursor: 'not-allowed' },
+  batchItemName: { color: 'var(--text)', flexShrink: 0, maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  batchItemCode: { fontSize: 11, color: 'var(--overlay0)' },
+  batchItemTerms: { fontSize: 10, color: 'var(--blue)' },
+  batchItemIn: { fontSize: 10, color: 'var(--green)', marginLeft: 'auto' },
+  batchAddBtn: { width: '100%' },
   searchResultItem: {
     display: 'flex',
     alignItems: 'center',
@@ -1023,6 +1238,15 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 16,
     color: 'var(--blue)',
     fontWeight: 'bold',
+  },
+  degradedBanner: {
+    padding: '6px 12px',
+    margin: '0 12px 8px',
+    fontSize: 11,
+    lineHeight: 1.6,
+    color: 'var(--yellow)',
+    background: 'rgba(var(--yellow-rgb), 0.1)',
+    borderRadius: 4,
   },
   errorBanner: {
     display: 'block',

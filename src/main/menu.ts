@@ -14,15 +14,22 @@ export interface MenuActions {
   goBack: () => void
   goForward: () => void
   focusAddress: () => void
+  /** 把当前标签弹出为独立窗口（多屏时可拖到另一块屏幕） */
+  popoutTab: () => void
+  /** 召唤 AI 助手（Copilot） */
+  openCopilot: () => void
   /** 缩放当前网页（若无网页标签则缩放应用界面） */
   zoomIn: () => void
   zoomOut: () => void
   resetZoom: () => void
+  /** 显示/隐藏 AI 桌宠浮窗 */
+  togglePet: () => void
 }
 
 export function buildApplicationMenu(actions: MenuActions): Menu {
   const template: MenuItemConstructorOptions[] = [
     {
+      id: 'menu-tabs',
       label: '标签',
       submenu: [
         { label: '新建标签', accelerator: 'CmdOrCtrl+T', click: actions.createTab },
@@ -33,9 +40,28 @@ export function buildApplicationMenu(actions: MenuActions): Menu {
         { label: '刷新', accelerator: 'CmdOrCtrl+R', click: actions.reloadTab },
         { type: 'separator' },
         { label: '定位到地址栏', accelerator: 'CmdOrCtrl+L', click: actions.focusAddress },
+        { type: 'separator' },
+        {
+          label: '弹出为独立窗口',
+          accelerator: 'CmdOrCtrl+Shift+O',
+          click: actions.popoutTab,
+        },
       ],
     },
     {
+      id: 'menu-copilot',
+      label: '助手',
+      submenu: [
+        { label: 'AI 助手', accelerator: 'CmdOrCtrl+K', click: actions.openCopilot },
+        {
+          label: '牛来',
+          accelerator: 'CmdOrCtrl+Shift+P',
+          click: actions.togglePet,
+        },
+      ],
+    },
+    {
+      id: 'menu-view',
       label: '视图',
       submenu: [
         // 快捷键由 before-input-event 直接接管（菜单 accelerator 在部分键盘布局下不命中，
@@ -50,6 +76,7 @@ export function buildApplicationMenu(actions: MenuActions): Menu {
       ],
     },
     {
+      id: 'menu-help',
       label: '帮助',
       submenu: [{ label: '打开日志目录', click: () => openLogDir() }],
     },

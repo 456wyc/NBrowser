@@ -6,6 +6,8 @@ import {
   type ResearchReport,
 } from '@shared/ipc'
 import { Markdown } from '../components/Markdown'
+import { reportToNoteMarkdown } from '@shared/note-from-analysis'
+import { saveNoteWithToast } from '../lib/saveNote'
 
 /**
  * 研究报告库：深度研究代理每次产出报告都会落库，这里做列表 / 查看 / 删除。
@@ -91,6 +93,16 @@ export function ResearchReportsPanel() {
     }
   }
 
+  // 一键沉淀：把报告存为笔记
+  const handleSaveNote = async () => {
+    if (!active) return
+    await saveNoteWithToast(
+      active.query.slice(0, 30) || '研究报告',
+      reportToNoteMarkdown(active.query, active.report, active.created_at),
+      showToast
+    )
+  }
+
   // ---- 详情 ----
   if (active) {
     return (
@@ -100,6 +112,13 @@ export function ResearchReportsPanel() {
             ‹ 返回
           </button>
           <span style={styles.modeBadge}>{modeLabel(active.mode)}</span>
+          <button
+            onClick={handleSaveNote}
+            style={styles.exportBtn}
+            title="存为笔记（可追溯、可检索、可与 AI 讨论）"
+          >
+            📒 存为笔记
+          </button>
           <button
             onClick={() => handleExport(active.id)}
             style={styles.exportBtn}
@@ -117,6 +136,11 @@ export function ResearchReportsPanel() {
         </div>
         <div style={styles.queryLine}>{active.query}</div>
         <div style={styles.timeLine}>{formatTime(active.created_at)}</div>
+        {toast && (
+          <div className={toast.ok ? 'toast' : 'toast-error'} style={{ margin: '0 16px 8px' }}>
+            {toast.text}
+          </div>
+        )}
         <div style={styles.reportBody}>
           <Markdown text={active.report} />
         </div>

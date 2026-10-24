@@ -20,6 +20,17 @@ const EXAMPLE_IDEAS = [
   'RSI低于30抄底，高于70离场',
 ]
 
+/** 策略运行风险确认：本机确认过一次后不再追问 */
+const RISK_ACK_KEY = 'stock-browser.strategyRiskAck'
+
+function riskAcked(): boolean {
+  try {
+    return localStorage.getItem(RISK_ACK_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 /**
  * AI 量化策略：自然语言目标 → 大模型生成结构化规则 → 保存 / 回测。
  * 与研报页同构：列表 / 详情两态；另含「生成」浮层式卡片。
@@ -48,6 +59,8 @@ export function StrategyPanel() {
   const [signals, setSignals] = useState<StrategySignal[]>([])
   // 列表页展示的运行中策略 id 集合
   const [runningIds, setRunningIds] = useState<Set<number>>(new Set())
+  // 首次启动运行态前的风险确认（确认过一次后本机不再追问）
+  const [runConfirm, setRunConfirm] = useState<{ id: number; kind: 'run' | 'check' } | null>(null)
 
   // 编辑态（手动微调规则参数，不必每次都问大模型）
   const [editing, setEditing] = useState(false)
@@ -233,6 +246,16 @@ export function StrategyPanel() {
   }
 
   const runStrategy = async (id: number) => {
+    // 合规闸门：首次启动运行态前必须过风险确认（确认过一次后本机不再追问）
+    if (!riskAcked()) {
+      setRunConfirm({ id, kind: 'run' })
+      return
+    }
+    await startStrategy(id)
+  }
+
+  /** 真正启动策略运行（已过风险确认） */
+  const startStrategy = async (id: number) => {
     try {
       await window.electronAPI.invoke(IPC_CHANNELS.STRATEGY_RUN, { id })
       setRunning(true)
@@ -254,8 +277,17 @@ export function StrategyPanel() {
     )
   }, [list, keyword])
 
-  /** 立即检查一次：非交易时段也能验证规则配置是否写对 */
+  /** 立即检查一次：非交易时段也能验证规则配置是否写对（同样会启动运行态，过风险闸门） */
   const checkOnce = async (id: number) => {
+    if (!riskAcked()) {
+      setRunConfirm({ id, kind: 'check' })
+      return
+    }
+    await checkOnceNow(id)
+  }
+
+  /** 立即检查的真正逻辑（已过风险确认） */
+  const checkOnceNow = async (id: number) => {
     try {
       const res = await window.electronAPI.invoke(IPC_CHANNELS.STRATEGY_CHECK, { id })
       setRunning(true)
@@ -273,6 +305,20 @@ export function StrategyPanel() {
     } catch (err) {
       showToast('检查失败：' + (err instanceof Error ? err.message : String(err)), false)
     }
+  }
+
+  /** 风险确认卡片：用户点「我已了解」后记住选择并继续原操作 */
+  const confirmRun = async () => {
+    const pending = runConfirm
+    if (!pending) return
+    try {
+      localStorage.setItem(RISK_ACK_KEY, '1')
+    } catch {
+      /* 隐私模式等场景记不住，下次再问 */
+    }
+    setRunConfirm(null)
+    if (pending.kind === 'check') await checkOnceNow(pending.id)
+    else await startStrategy(pending.id)
   }
 
   /** 复制策略：用当前规则创建一个新副本，便于在原策略上做 A/B 微调 */
@@ -414,6 +460,24 @@ export function StrategyPanel() {
             </>
           )}
         </div>
+        {/* 运行前风险确认（首次启动时弹出，确认后本机不再追问） */}
+        {runConfirm && (
+          <div style={styles.riskCard}>
+            <div style={styles.riskTitle}>⚠ 风险确认</div>
+            <div style={styles.riskText}>
+              策略运行后将按你设定的规则实时提示买卖点。买卖点仅为规则匹配结果，<b>不构成投资建议</b>
+              ；历史回测未计滑点与手续费，过往表现不代表未来收益。请自行判断并注意风险。
+            </div>
+            <div style={styles.riskActions}>
+              <button onClick={() => setRunConfirm(null)} className="btn">
+                取消
+              </button>
+              <button onClick={() => void confirmRun()} className="btn-primary">
+                我已了解，{runConfirm.kind === 'check' ? '开始检查' : '开始运行'}
+              </button>
+            </div>
+          </div>
+        )}
         <div style={styles.body}>
           <div style={styles.fieldBlock}>
             <div style={styles.label}>策略标题</div>
@@ -1144,6 +1208,11 @@ function BacktestView({ results }: { results: BacktestSymbolResult[] | null }) {
                   <Metric label="平均持有" value={`${r.summary.avgHoldDays} 天`} />
                 </div>
                 <EquityCurve trades={r.trades} />
+                {/* 合规标注：回测口径的局限必须随结果一同展示 */}
+                <div style={styles.btNote}>
+                  回测未计滑点、手续费与涨跌停可成交性，历史表现不代表未来收益。
+                  {r.summary.total < 10 && ' ⚠ 交易笔数少，胜率统计意义有限。'}
+                </div>
                 {r.benchmarkPct != null && (
                   <div style={styles.benchRow}>
                     同期「买入并持有」{r.benchmarkPct >= 0 ? '+' : ''}
@@ -1548,6 +1617,17 @@ const styles: Record<string, React.CSSProperties> = {
   searchInput: { margin: '0 16px 8px', width: 'calc(100% - 32px)', fontSize: 11, padding: '4px 8px' },
   itemMeta: { fontSize: 10, color: 'var(--overlay0)', marginTop: 2 },
   metricRow: { display: 'flex', gap: 6, flexWrap: 'wrap', margin: '6px 0 2px' },
+  riskCard: {
+    margin: '8px 10px 0',
+    padding: '10px 12px',
+    background: 'rgba(var(--yellow-rgb), 0.1)',
+    border: '1px solid rgba(var(--yellow-rgb), 0.4)',
+    borderRadius: 8,
+    flexShrink: 0,
+  },
+  riskTitle: { fontSize: 12.5, fontWeight: 600, color: 'var(--yellow)', marginBottom: 4 },
+  riskText: { fontSize: 11.5, color: 'var(--subtext0)', lineHeight: 1.7 },
+  riskActions: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 },
   metric: {
     flex: '1 1 62px',
     minWidth: 62,
@@ -1559,6 +1639,7 @@ const styles: Record<string, React.CSSProperties> = {
   metricLabel: { fontSize: 9, color: 'var(--overlay0)' },
   metricValue: { fontSize: 12, fontWeight: 600, marginTop: 1 },
   benchRow: { fontSize: 10, color: 'var(--subtext0)', margin: '2px 0 4px' },
+  btNote: { fontSize: 10, color: 'var(--yellow)', lineHeight: 1.6, margin: '2px 0 4px' },
   curveBox: { margin: '2px 0 4px' },
   curveCaption: { fontSize: 9, color: 'var(--overlay0)', marginTop: 2 },
   card: {

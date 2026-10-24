@@ -1,4 +1,4 @@
-import { ipcMain, dialog, app, BrowserWindow, shell, webContents } from 'electron'
+import { ipcMain, dialog, app, BrowserWindow, Menu, shell, webContents } from 'electron'
 import { IPC_CHANNELS } from '@shared/ipc'
 import type {
   SpacesGetAllRequest,
@@ -32,6 +32,30 @@ import type {
   TabsNavigateResponse,
   TabsReorderRequest,
   TabsReorderResponse,
+  TabsPopoutRequest,
+  TabsPopoutResponse,
+  AppShowMenuRequest,
+  AppShowMenuResponse,
+  WindowsGetAllRequest,
+  WindowsGetAllResponse,
+  WindowsFocusRequest,
+  WindowsFocusResponse,
+  WindowsCloseRequest,
+  WindowsCloseResponse,
+  WindowsCloseAllRequest,
+  WindowsCloseAllResponse,
+  WindowsSetBoundsRequest,
+  WindowsSetBoundsResponse,
+  WindowsGetTabsRequest,
+  WindowsGetTabsResponse,
+  WindowsNewTabRequest,
+  WindowsNewTabResponse,
+  WindowsSwitchTabRequest,
+  WindowsSwitchTabResponse,
+  WindowsCloseTabRequest,
+  WindowsCloseTabResponse,
+  WindowsReturnTabRequest,
+  WindowsReturnTabResponse,
 
   TabsShowContextMenuRequest,
   TabsShowContextMenuResponse,
@@ -47,6 +71,11 @@ import type {
   TradesImportParseResponse,
   TradesImportBulkRequest,
   TradesImportBulkResponse,
+  TradesParseNaturalRequest,
+  TradesParseNaturalResponse,
+  TradesGetContextRequest,
+  TradesGetContextResponse,
+  ParsedTrade,
 
   ReviewsSaveRequest,
   ReviewsSaveResponse,
@@ -96,6 +125,9 @@ import type {
   QuotesRefreshResponse,
   QuoteHistoryGetRequest,
   QuoteHistoryGetResponse,
+  QuoteSourceInfo,
+  QuoteSourceTestRequest,
+  QuoteSourceTestResponse,
 
   PageVisitsGetSummaryRequest,
   PageVisitsGetSummaryResponse,
@@ -111,6 +143,10 @@ import type {
   SettingsGetTrackingEnabledResponse,
   SettingsSetTrackingEnabledRequest,
   SettingsSetTrackingEnabledResponse,
+  SettingsGetSessionRestoreRequest,
+  SettingsGetSessionRestoreResponse,
+  SettingsSetSessionRestoreRequest,
+  SettingsSetSessionRestoreResponse,
   SettingsGetBlacklistRequest,
   SettingsGetBlacklistResponse,
   SettingsSetBlacklistRequest,
@@ -146,6 +182,28 @@ import type {
   AgentRunRequest,
   AgentEvent,
   AgentStopRequest,
+  AgentChatRequest,
+  AgentChatResponse,
+  AgentConfirmActionRequest,
+  AgentConfirmActionResponse,
+  AgentSessionsListResponse,
+  AgentSessionGetResponse,
+  AgentSessionDeleteRequest,
+  AgentSessionDeleteResponse,
+  PageAgentStartRequest,
+  PageAgentStartResponse,
+  PageAgentStopRequest,
+  PageAgentStopResponse,
+  PageAgentEvent,
+  PetToggleRequest,
+  PetToggleResponse,
+  PetSetSizeRequest,
+  PetSetSizeResponse,
+  PetNotifyPayload,
+  PetGetConfigRequest,
+  PetGetConfigResponse,
+  PetSetConfigRequest,
+  PetSetConfigResponse,
   WatchlistGroupsGetRequest,
   WatchlistGroupsGetResponse,
   WatchlistGroupCreateRequest,
@@ -238,7 +296,11 @@ import {
 import { getSignals } from '../db/strategy-signals'
 import { buildTabContextMenu } from '../context-menu'
 import { DeepResearchAgent } from '../agent/deep-agent'
+import { CopilotAgent } from '../agent/copilot'
 import { testMcpServer } from '../agent/mcp-client'
+import { runPageAgent } from '../agent/page-controller'
+import { togglePetWindow, setPetSize, getPetWindow, isPetVisible } from '../browser/pet-window'
+import { listSessions, getSession, deleteSession, parseSessionMessages } from '../db/agent-sessions'
 import { addReport, listReports, getReport, deleteReport } from '../db/research-reports'
 import {
   listNotes,
@@ -283,9 +345,12 @@ import {
   getTodayStockSummary,
   getVisitsByStockAndDate,
   getVisitsByDate,
+  getVisitsBySymbolAndRange,
   deleteVisit,
   clearAllVisits,
 } from '../db/page-visits'
+import { getAnalysesBySymbolAndRange } from '../db/ai-analyses'
+import { selectDecisionContext, extractSummary, AFTER_WINDOW_MS } from '@shared/review-context'
 import {
   isTrackingEnabled,
   setTrackingEnabled,
@@ -296,6 +361,8 @@ import {
   getTradingCalendar,
   setTradingCalendar,
   getSpaces,
+  isSessionRestoreEnabled,
+  setSessionRestoreEnabled,
 } from '../db/settings'
 import {
   addTrade,
@@ -310,9 +377,17 @@ import {
 import { addQuoteHistoryBatch, getQuoteHistory } from '../db/quote-history'
 import { DEFAULT_CALENDAR } from '../quote/trading-calendar'
 import { parseBrokerStatement, parseBrokerStatementWithLLM } from '../import/broker-import'
+import {
+  naturalTradeSystemPrompt,
+  naturalTradeUserPrompt,
+  sanitizeNaturalTrades,
+} from '../import/natural-trade'
 import { extractStockFromUrl, extractStockFromText } from '../stock-extractor'
 import { normalizeSymbol } from '@shared/stock-market'
-import { getConfig, updateConfig } from '../config'
+import { summarizeAction } from '@shared/agent-actions'
+import { createQuoteProvider } from '../quote/provider-factory'
+import type { CustomQuoteConfig } from '../quote/custom-http-provider'
+import { getConfig, updateConfig, DEFAULT_PET_SYSTEM_PROMPT } from '../config'
 import { LLMClient } from '../ai/llm-client'
 import { toCsv } from '@shared/csv'
 import { writeFileSync } from 'fs'
@@ -351,6 +426,21 @@ export function setQuoteProvider(provider: QuoteProvider): void {
 function getMgr(): MainWindowManager {
   if (!mainWindowManager) throw new Error('MainWindowManager not initialized')
   return mainWindowManager
+}
+
+/**
+ * 取标签所属空间的标签管理器
+ *
+ * 独立窗口里的标签可能属于非当前空间（弹出后用户在主窗口切了空间），
+ * 传了 tabId 就按它定位，否则用当前空间。定位不到才回落到当前空间。
+ */
+function tabManagerForTab(tabId?: string) {
+  const mgr = getMgr()
+  if (tabId) {
+    const owner = mgr.getTabManagerForTab(tabId)
+    if (owner) return owner
+  }
+  return mgr.getTabManager()
 }
 
 function getQuoteMgr(): QuotePollingManager {
@@ -444,12 +534,18 @@ export function registerIpcHandlers(): void {
     return { tab: tm.getActiveTab() }
   })
 
-  ipcMain.handle(IPC_CHANNELS.TABS_CREATE, (_event, req: TabsCreateRequest): TabsCreateResponse => {
+  ipcMain.handle(IPC_CHANNELS.TABS_CREATE, (event, req: TabsCreateRequest): TabsCreateResponse => {
     if (req && req.url !== undefined && typeof req.url !== 'string') {
       throw new Error('Invalid tabs:create request: url must be string')
     }
-    const tm = getMgr().getTabManager()
-    const tab = tm.createTab(req?.url, req?.active !== false)
+    const mgr = getMgr()
+    // 从独立窗口的页面里「开新标签」（导航首页卡片 / window.open）：
+    // 开成**同一个窗口里的新一页**，而不是塞回主窗口、也不是再弹一个新 OS 窗口
+    const senderTabId = mgr.findTabIdByWebContents(event.sender)
+    const senderWindowId = senderTabId ? mgr.getPopoutManager().windowIdOf(senderTabId) : null
+    const tm = senderTabId ? tabManagerForTab(senderTabId) : tabManagerForTab()
+    const tab = tm.createTab(req?.url, (req?.active !== false) && !senderWindowId)
+    if (senderWindowId) mgr.getPopoutManager().addTabToWindow(senderWindowId, tab.id)
     return { tab }
   })
 
@@ -475,30 +571,31 @@ export function registerIpcHandlers(): void {
     return { success }
   })
 
-  ipcMain.handle(IPC_CHANNELS.TABS_RELOAD, (_event, req: TabsReloadRequest): TabsReloadResponse => {
+  ipcMain.handle(IPC_CHANNELS.TABS_RELOAD, (event, req: TabsReloadRequest): TabsReloadResponse => {
     if (req?.tabId !== undefined && typeof req.tabId !== 'string') {
       throw new Error('Invalid tabs:reload request')
     }
-    const tm = getMgr().getTabManager()
-    const success = tm.reloadTab(req?.tabId)
+    // 不带 tabId 时按「发起请求的标签页」定位（独立窗口里的页面刷新的是自己）
+    const tabId = req?.tabId ?? getMgr().findTabIdByWebContents(event.sender) ?? undefined
+    const success = tabManagerForTab(tabId).reloadTab(tabId)
     return { success }
   })
 
-  ipcMain.handle(IPC_CHANNELS.TABS_GO_BACK, (_event, req: TabsGoBackRequest): TabsGoBackResponse => {
+  ipcMain.handle(IPC_CHANNELS.TABS_GO_BACK, (event, req: TabsGoBackRequest): TabsGoBackResponse => {
     if (req?.tabId !== undefined && typeof req.tabId !== 'string') {
       throw new Error('Invalid tabs:goBack request')
     }
-    const tm = getMgr().getTabManager()
-    const success = tm.goBack(req?.tabId)
+    const tabId = req?.tabId ?? getMgr().findTabIdByWebContents(event.sender) ?? undefined
+    const success = tabManagerForTab(tabId).goBack(tabId)
     return { success }
   })
 
-  ipcMain.handle(IPC_CHANNELS.TABS_GO_FORWARD, (_event, req: TabsGoForwardRequest): TabsGoForwardResponse => {
+  ipcMain.handle(IPC_CHANNELS.TABS_GO_FORWARD, (event, req: TabsGoForwardRequest): TabsGoForwardResponse => {
     if (req?.tabId !== undefined && typeof req.tabId !== 'string') {
       throw new Error('Invalid tabs:goForward request')
     }
-    const tm = getMgr().getTabManager()
-    const success = tm.goForward(req?.tabId)
+    const tabId = req?.tabId ?? getMgr().findTabIdByWebContents(event.sender) ?? undefined
+    const success = tabManagerForTab(tabId).goForward(tabId)
     return { success }
   })
 
@@ -533,10 +630,17 @@ export function registerIpcHandlers(): void {
         tabUrl: target.url,
         canCloseOthers: tabs.length > 1,
         canCloseRight: index < tabs.length - 1,
+        // 已弹出的标签在菜单里变成「收回主窗口」，再点一次就回来
+        poppedOut: Boolean(target.poppedOut),
+        // 已有独立窗口：可以直接并进去（菜单里列出「标题 · N 页」）
+        popoutWindows: mgr.getPopoutManager().list(),
         onReload: (id) => tm.reloadTab(id),
         onClose: (id) => tm.closeTab(id),
         onCloseOthers: (id) => tm.closeOtherTabs(id),
         onCloseRight: (id) => tm.closeTabsToTheRight(id),
+        onPopout: (id) => mgr.getPopoutManager().open(id),
+        onPopoutTo: (id, windowId) => mgr.getPopoutManager().addTabToWindow(windowId, id),
+        onReturnToMain: (id) => mgr.getPopoutManager().close(id),
       })
       menu.popup({ window: mgr.getWindow() })
 
@@ -544,17 +648,160 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  ipcMain.handle(IPC_CHANNELS.TABS_NAVIGATE, (_event, req: TabsNavigateRequest): TabsNavigateResponse => {
+  ipcMain.handle(IPC_CHANNELS.TABS_NAVIGATE, (event, req: TabsNavigateRequest): TabsNavigateResponse => {
     if (!req || typeof req.url !== 'string') {
       throw new Error('Invalid tabs:navigate request: url required')
     }
     if (req.tabId !== undefined && typeof req.tabId !== 'string') {
       throw new Error('Invalid tabs:navigate request: tabId must be string')
     }
-    const tm = getMgr().getTabManager()
-    const success = tm.navigate(req.url, req.tabId)
+    // 关键：不带 tabId 的导航（导航首页搜索框 / 书签卡片 / 自选股链接）
+    // 必须作用在「发起请求的那个标签页」上 —— 独立窗口里发起的导航要留在独立窗口，
+    // 否则用户在独立窗口里打开网站，页面会跑到主窗口去。
+    const tabId = req.tabId ?? getMgr().findTabIdByWebContents(event.sender) ?? undefined
+    const success = tabManagerForTab(tabId).navigate(req.url, tabId)
     return { success }
   })
+
+  // ---------- 独立窗口（标签页弹出为独立 OS 窗口，多屏各看各的） ----------
+
+  ipcMain.handle(IPC_CHANNELS.TABS_POPOUT, (_event, req: TabsPopoutRequest): TabsPopoutResponse => {
+    if (!req || typeof req.tabId !== 'string') {
+      throw new Error('Invalid tabs:popout request: tabId required')
+    }
+    return getMgr().getPopoutManager().open(req.tabId)
+  })
+
+  // 主窗口自绘顶栏的「标签 / 助手 / 视图 / 帮助」菜单按钮：在按钮位置弹出对应子菜单。
+  // 主窗口隐藏了原生标题栏（titleBarStyle: hidden），所以没有原生菜单栏，这里用自绘按钮 + 弹出应用菜单代替。
+  ipcMain.handle(
+    IPC_CHANNELS.APP_SHOW_MENU,
+    (event, req: AppShowMenuRequest): AppShowMenuResponse => {
+      if (!req || typeof req.menuId !== 'string') {
+        throw new Error('Invalid app:showMenu request: menuId required')
+      }
+      const menu = Menu.getApplicationMenu()
+      if (!menu) return { success: false }
+      const target = menu.getMenuItemById(req.menuId)?.submenu ?? menu
+      const win = BrowserWindow.fromWebContents(event.sender) ?? undefined
+      target.popup({ window: win, x: Math.round(req.x), y: Math.round(req.y) })
+      return { success: true }
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.WINDOWS_GET_ALL, (): WindowsGetAllResponse => {
+    return { windows: getMgr().getPopoutManager().list() }
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.WINDOWS_FOCUS,
+    (_event, req: WindowsFocusRequest): WindowsFocusResponse => {
+      if (!req || typeof req.tabId !== 'string') {
+        throw new Error('Invalid windows:focus request: tabId required')
+      }
+      return { success: getMgr().getPopoutManager().focus(req.tabId) }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WINDOWS_CLOSE,
+    (_event, req: WindowsCloseRequest): WindowsCloseResponse => {
+      if (!req || typeof req.tabId !== 'string') {
+        throw new Error('Invalid windows:close request: tabId required')
+      }
+      return { success: getMgr().getPopoutManager().close(req.tabId) }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WINDOWS_CLOSE_ALL,
+    (): WindowsCloseAllResponse => {
+      return { closed: getMgr().getPopoutManager().closeAll() }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WINDOWS_SET_BOUNDS,
+    (_event, req: WindowsSetBoundsRequest): WindowsSetBoundsResponse => {
+      if (!req || typeof req.windowId !== 'string') {
+        throw new Error('Invalid windows:setBounds request: windowId required')
+      }
+      getMgr()
+        .getPopoutManager()
+        .setViewBounds(req.windowId, { x: req.x, y: req.y, width: req.width, height: req.height })
+      return { success: true }
+    }
+  )
+
+  // ---------- 独立窗口内的标签栏（一个窗口可承载多页） ----------
+
+  ipcMain.handle(
+    IPC_CHANNELS.WINDOWS_GET_TABS,
+    (_event, req: WindowsGetTabsRequest): WindowsGetTabsResponse => {
+      if (!req || typeof req.windowId !== 'string') {
+        throw new Error('Invalid windows:getTabs request: windowId required')
+      }
+      const { tabs, activeTabId } = getMgr().getPopoutManager().listTabs(req.windowId)
+      return { windowId: req.windowId, tabs, activeTabId }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WINDOWS_NEW_TAB,
+    (_event, req: WindowsNewTabRequest): WindowsNewTabResponse => {
+      if (!req || typeof req.windowId !== 'string') {
+        throw new Error('Invalid windows:newTab request: windowId required')
+      }
+      if (req.url !== undefined && typeof req.url !== 'string') {
+        throw new Error('Invalid windows:newTab request: url must be string')
+      }
+      const mgr = getMgr()
+      const tabId = mgr.newTabInPopoutWindow(req.windowId, req.url)
+      if (!tabId) throw new Error('该独立窗口已关闭')
+      return { tabId }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WINDOWS_SWITCH_TAB,
+    (_event, req: WindowsSwitchTabRequest): WindowsSwitchTabResponse => {
+      if (!req || typeof req.tabId !== 'string') {
+        throw new Error('Invalid windows:switchTab request: tabId required')
+      }
+      return { success: getMgr().getPopoutManager().switchTab(req.tabId) }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WINDOWS_CLOSE_TAB,
+    (_event, req: WindowsCloseTabRequest): WindowsCloseTabResponse => {
+      if (!req || typeof req.tabId !== 'string') {
+        throw new Error('Invalid windows:closeTab request: tabId required')
+      }
+      const mgr = getMgr()
+      const popout = mgr.getPopoutManager()
+      const windowId = popout.windowIdOf(req.tabId)
+      if (!windowId) return { success: false }
+      // 窗口里只剩这一页：收回整个窗口，标签回到主窗口标签栏
+      if (popout.listTabs(windowId).tabs.length <= 1) {
+        return { success: popout.close(req.tabId) }
+      }
+      // 还有其它页：真正关掉这一页（销毁 WebContents，窗口保留）
+      // 关闭流程里的 onBeforeTabClosed 会把它从窗口摘下来
+      return { success: tabManagerForTab(req.tabId).closeTab(req.tabId).success }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.WINDOWS_RETURN_TAB,
+    (_event, req: WindowsReturnTabRequest): WindowsReturnTabResponse => {
+      if (!req || typeof req.tabId !== 'string') {
+        throw new Error('Invalid windows:returnTab request: tabId required')
+      }
+      // 把这一页送回主窗口标签栏；是窗口最后一页时等价于收回整个窗口
+      return { success: getMgr().getPopoutManager().returnTabToMain(req.tabId) }
+    }
+  )
 
   // ---------- Bookmarks (async - 数据库操作) ----------
 
@@ -866,6 +1113,95 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  // ---------- 行情数据源配置 ----------
+
+  ipcMain.handle(IPC_CHANNELS.QUOTE_GET_SOURCE, (): QuoteSourceInfo => {
+    const cfg = getConfig().quote
+    // 实际生效的源：连续失败自动降级后与用户选的不同，界面要能看出来
+    let active: string | undefined
+    let degraded: boolean | undefined
+    try {
+      const src = getQuoteMgr().getSource()
+      active = src.active
+      degraded = src.degraded
+    } catch {
+      // 轮询器还没初始化（理论不会）：只返回配置值
+    }
+    return {
+      provider: cfg.provider || 'eastmoney',
+      custom: cfg.custom
+        ? {
+            quoteUrl: cfg.custom.quoteUrl || '',
+            klineUrl: cfg.custom.klineUrl,
+            quoteArrayPath: cfg.custom.quoteArrayPath,
+            fieldMap: cfg.custom.fieldMap || {},
+            headers: cfg.custom.headers,
+          }
+        : undefined,
+      active,
+      degraded,
+    }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.QUOTE_SET_SOURCE, (_event, req: QuoteSourceInfo) => {
+    if (!req || typeof req.provider !== 'string') {
+      throw new Error('Invalid quote:setSource request: provider required')
+    }
+    const valid = ['eastmoney', 'tencent', 'custom']
+    const provider = valid.includes(req.provider) ? req.provider : 'eastmoney'
+    const custom =
+      provider === 'custom' && req.custom
+        ? {
+            quoteUrl: req.custom.quoteUrl || '',
+            klineUrl: req.custom.klineUrl,
+            quoteArrayPath: req.custom.quoteArrayPath,
+            fieldMap: (req.custom.fieldMap || {}) as CustomQuoteConfig['fieldMap'],
+            headers: req.custom.headers,
+          }
+        : undefined
+    updateConfig({ quote: { ...getConfig().quote, provider, custom } })
+    // 运行时切换：立即用新源拉一次，用户马上看到是否可用
+    const newProvider = createQuoteProvider(provider, custom)
+    getQuoteMgr().setProvider(newProvider)
+    return { ok: true }
+  })
+
+  // 测试连接：用固定代码拉一次，返回样例与耗时（不写入配置）
+  ipcMain.handle(
+    IPC_CHANNELS.QUOTE_TEST_SOURCE,
+    async (_event, req: QuoteSourceTestRequest): Promise<QuoteSourceTestResponse> => {
+      const started = Date.now()
+      try {
+        if (!req || typeof req.provider !== 'string') {
+          throw new Error('provider required')
+        }
+        const provider = createQuoteProvider(
+          req.provider,
+          req.custom as CustomQuoteConfig | undefined
+        )
+        const quotes = await provider.getQuotes(['600519.SH'])
+        if (quotes.length === 0) throw new Error('未返回行情数据')
+        const q = quotes[0]
+        return {
+          ok: true,
+          sample: {
+            symbol: q.symbol,
+            name: q.name,
+            price: q.price,
+            changePercent: q.changePercent,
+          },
+          latencyMs: Date.now() - started,
+        }
+      } catch (err: any) {
+        return {
+          ok: false,
+          error: err?.message || String(err),
+          latencyMs: Date.now() - started,
+        }
+      }
+    }
+  )
+
   ipcMain.handle(
     IPC_CHANNELS.QUOTE_HISTORY_GET,
     async (_event, req: QuoteHistoryGetRequest): Promise<QuoteHistoryGetResponse> => {
@@ -1039,6 +1375,29 @@ export function registerIpcHandlers(): void {
       }
       const db = await getDb()
       setTrackingEnabled(db, req.enabled)
+      return { success: true }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.SETTINGS_GET_SESSION_RESTORE,
+    async (): Promise<SettingsGetSessionRestoreResponse> => {
+      const db = await getDb()
+      return { enabled: isSessionRestoreEnabled(db) }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.SETTINGS_SET_SESSION_RESTORE,
+    async (
+      _event,
+      req: SettingsSetSessionRestoreRequest
+    ): Promise<SettingsSetSessionRestoreResponse> => {
+      if (!req || typeof req.enabled !== 'boolean') {
+        throw new Error('Invalid settings:setSessionRestore request: enabled required')
+      }
+      const db = await getDb()
+      setSessionRestoreEnabled(db, req.enabled)
       return { success: true }
     }
   )
@@ -1288,6 +1647,8 @@ export function registerIpcHandlers(): void {
         throw new Error('没有可导入的成交记录')
       }
       const db = await getDb()
+      // 来源：交割单导入（默认）/ 自然语言录入（AI 辅助，但仍属用户手工确认的记录）
+      const source = req.source === 'manual' ? 'manual' : 'broker_import'
       let inserted = 0
       let skipped = 0
       const errors: string[] = []
@@ -1301,7 +1662,7 @@ export function registerIpcHandlers(): void {
             quantity: t.quantity,
             traded_at: t.tradedAt,
             fee: t.fee || 0,
-            source: 'broker_import',
+            source,
             confirmed: 1,
             buy_reason: null,
             sell_reason: null,
@@ -1313,6 +1674,76 @@ export function registerIpcHandlers(): void {
         }
       }
       return { inserted, skipped, errors }
+    }
+  )
+
+  // 自然语言录入：大模型把大白话解析为成交记录（结果仍走预览确认，不直接入库）
+  ipcMain.handle(
+    IPC_CHANNELS.TRADES_PARSE_NATURAL,
+    async (_event, req: TradesParseNaturalRequest): Promise<TradesParseNaturalResponse> => {
+      if (!req || typeof req.text !== 'string' || !req.text.trim()) {
+        throw new Error('请先输入交易描述')
+      }
+      const cfg = getConfig()
+      if (!cfg.llm.apiKey) {
+        throw new Error('API Key 未配置，请在设置中填写')
+      }
+      const client = new LLMClient({
+        baseUrl: cfg.llm.baseUrl,
+        apiKey: cfg.llm.apiKey,
+        model: cfg.llm.model,
+      })
+      const warnings: string[] = []
+      let trades: ParsedTrade[] = []
+      try {
+        const data = await client.completeJson(
+          naturalTradeSystemPrompt(),
+          naturalTradeUserPrompt(req.text, new Date())
+        )
+        trades = sanitizeNaturalTrades(data)
+      } catch (err) {
+        throw new Error('解析失败：' + (err instanceof Error ? err.message : String(err)))
+      }
+      if (trades.length === 0) {
+        warnings.push('未能从描述中识别出有效的成交记录，请补充代码/方向/价格/数量等要素')
+      }
+      return { trades, warnings }
+    }
+  )
+
+  // 复盘闭环：成交前 N 天、同一股票的研究记录（浏览轨迹 + AI 分析）
+  ipcMain.handle(
+    IPC_CHANNELS.TRADES_GET_CONTEXT,
+    async (_event, req: TradesGetContextRequest): Promise<TradesGetContextResponse> => {
+      if (!req || typeof req.symbol !== 'string' || typeof req.tradedAt !== 'number') {
+        throw new Error('Invalid trades:getContext request: symbol and tradedAt required')
+      }
+      const db = await getDb()
+      const symbol = normalizeSymbol(req.symbol)
+      const hours = typeof req.hours === 'number' ? req.hours : 72
+      const from = req.tradedAt - Math.min(Math.max(hours, 1), 720) * 3600 * 1000
+      const to = req.tradedAt + AFTER_WINDOW_MS
+      const ctx = selectDecisionContext({
+        visits: getVisitsBySymbolAndRange(db, symbol, from, to),
+        analyses: getAnalysesBySymbolAndRange(db, symbol, from, to).map((a) => ({
+          id: a.id,
+          url: a.url,
+          symbol: a.symbol,
+          page_type: a.page_type,
+          created_at: a.created_at,
+          summary: extractSummary(a.result_json),
+        })),
+        symbol,
+        tradedAt: req.tradedAt,
+        hours,
+      })
+      return {
+        visits: ctx.visits,
+        analyses: ctx.analyses,
+        totalResearchMs: ctx.totalResearchMs,
+        windowFrom: ctx.windowFrom,
+        windowTo: ctx.windowTo,
+      }
     }
   )
 
@@ -1434,6 +1865,26 @@ export function registerIpcHandlers(): void {
   // ===== LangChain 深度研究代理 =====
   let activeAgent: { abort: AbortController } | null = null
 
+  /**
+   * 广播 Agent 流式事件到**所有**窗口。
+   *
+   * 以前只发给主窗口，导致 AI 桌宠（独立浮窗）发起的对话收不到 delta，
+   * 表现为「发出去没反应、助手气泡一直空着」。
+   * 各监听端只有在自己发起会话时才消费（streamingId 为空直接忽略），
+   * 所以广播不会让主窗口 Copilot 和桌宠互相串台。
+   */
+  function pushAgentEventToAll(evt: AgentEvent): void {
+    for (const w of BrowserWindow.getAllWindows()) {
+      try {
+        if (!w.isDestroyed() && w.webContents && !w.webContents.isDestroyed()) {
+          w.webContents.send(IPC_CHANNELS.AGENT_STREAM, evt)
+        }
+      } catch {
+        /* 单个窗口发送失败不影响其它窗口 */
+      }
+    }
+  }
+
   ipcMain.handle(
     IPC_CHANNELS.AGENT_RUN,
     async (_event, req: AgentRunRequest): Promise<{ ok: boolean }> => {
@@ -1452,10 +1903,7 @@ export function registerIpcHandlers(): void {
       )
 
       const push = (evt: AgentEvent) => {
-        const win = getMgr().getWindow()
-        if (win && !win.isDestroyed()) {
-          win.webContents.send(IPC_CHANNELS.AGENT_STREAM, evt)
-        }
+        pushAgentEventToAll(evt)
         // 报告产出即落库，避免关掉面板后成果丢失
         if (evt.type === 'done' && evt.report && evt.report !== '(未生成报告)') {
           ;(async () => {
@@ -1486,6 +1934,281 @@ export function registerIpcHandlers(): void {
     activeAgent?.abort.abort()
     activeAgent = null
   })
+
+  // ===== AI 助手 Copilot（多轮会话 + 内部数据工具 + 行动工具）=====
+  let activeCopilot: { abort: AbortController } | null = null
+
+  // 行动工具的用户确认：requestId → resolve(approved)
+  const pendingConfirmations = new Map<string, (approved: boolean) => void>()
+  const CONFIRM_TIMEOUT_MS = 120_000
+
+  /** 请求用户确认一个写操作：推送 action_confirm 事件并等待用户点击（超时按取消处理） */
+  const requestActionConfirmation = (tool: string, args: Record<string, unknown>): Promise<boolean> => {
+    const requestId = `act-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const win = getMgr().getWindow()
+    if (!win || win.isDestroyed()) return Promise.resolve(false)
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        pendingConfirmations.delete(requestId)
+        resolve(false)
+      }, CONFIRM_TIMEOUT_MS)
+      pendingConfirmations.set(requestId, (approved) => {
+        clearTimeout(timer)
+        resolve(approved)
+      })
+      win.webContents.send(IPC_CHANNELS.AGENT_STREAM, {
+        type: 'action_confirm',
+        requestId,
+        tool,
+        summary: summarizeAction(tool, args),
+      } satisfies AgentEvent)
+    })
+  }
+
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_CONFIRM_ACTION,
+    async (_event, req: AgentConfirmActionRequest): Promise<AgentConfirmActionResponse> => {
+      if (!req || typeof req.requestId !== 'string') {
+        throw new Error('Invalid agent:confirmAction request: requestId required')
+      }
+      const resolve = pendingConfirmations.get(req.requestId)
+      if (!resolve) return { ok: false }
+      pendingConfirmations.delete(req.requestId)
+      resolve(req.approved === true)
+      return { ok: true }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_CHAT,
+    async (_event, req: AgentChatRequest): Promise<AgentChatResponse> => {
+      if (!req || typeof req.message !== 'string' || !req.message.trim()) {
+        throw new Error('Invalid agent:chat request: message required')
+      }
+      const llm = getConfig().llm
+      const agent = new CopilotAgent(
+        {
+          getWindow: () => getMgr().getWindow(),
+          getActiveWebContents: () => getMgr().getTabManager().getWebContents(),
+          getDb,
+          getLatestQuotes: () => getQuoteMgr().getLatestQuotes(),
+          requestConfirmation: requestActionConfirmation,
+          // 写操作副作用与 IPC 层保持同一套行为（刷新/广播/镜像/向量）
+          afterWatchlistAdd: (symbol, name) => {
+            getQuoteMgr().refresh().catch(() => {
+              // 静默失败，下次轮询会更新
+            })
+            void broadcastWatchlist()
+            console.log(`[copilot] 已加入自选股：${name}（${symbol}）`)
+          },
+          afterNoteSaved: (note) => {
+            try {
+              syncNoteToFile(note)
+            } catch (err) {
+              console.error('[notes-sync] Copilot 建笔记后同步文件失败：', err)
+            }
+            const text = `${note.title}\n${note.content}`.trim()
+            if (text) {
+              void (async () => {
+                try {
+                  const emb = await embedText(text)
+                  setNoteEmbedding(await getDb(), note.id, emb)
+                } catch (err) {
+                  console.error('[kb] Copilot 建笔记向量更新失败（不影响保存）：', err)
+                }
+              })()
+            }
+            broadcastNotes({ note })
+          },
+        },
+        {
+          baseUrl: llm.baseUrl,
+          apiKey: llm.apiKey,
+          model: llm.model,
+          fastModel: llm.fastModel,
+          capabilities: getConfig().agent,
+        }
+      )
+
+      const push = (evt: AgentEvent) => {
+        pushAgentEventToAll(evt)
+      }
+
+      const ac = new AbortController()
+      activeCopilot = { abort: ac }
+      try {
+        const { sessionId } = await agent.chat(
+          {
+            sessionId: typeof req.sessionId === 'number' ? req.sessionId : undefined,
+            message: req.message,
+            currentUrl: req.currentUrl,
+            // 桌宠会把名字/人设带进来，让助手知道「我是谁」
+            persona: typeof req.persona === 'string' ? req.persona : undefined,
+          },
+          push,
+          ac.signal
+        )
+        return { ok: true, sessionId }
+      } finally {
+        activeCopilot = null
+      }
+    }
+  )
+
+  ipcMain.handle(IPC_CHANNELS.AGENT_CHAT_STOP, async () => {
+    activeCopilot?.abort.abort()
+    activeCopilot = null
+  })
+
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_SESSIONS_LIST,
+    async (): Promise<AgentSessionsListResponse> => {
+      const db = await getDb()
+      return { sessions: listSessions(db) }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_SESSION_GET,
+    async (_event, req: { sessionId: number }): Promise<AgentSessionGetResponse> => {
+      if (!req || typeof req.sessionId !== 'number') {
+        throw new Error('Invalid agent:sessionGet request: sessionId required')
+      }
+      const db = await getDb()
+      const session = getSession(db, req.sessionId)
+      if (!session) return { session: null }
+      return {
+        session: {
+          id: session.id,
+          title: session.title,
+          created_at: session.created_at,
+          updated_at: session.updated_at,
+          messages: parseSessionMessages(session.messages_json),
+        },
+      }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_SESSION_DELETE,
+    async (_event, req: AgentSessionDeleteRequest): Promise<AgentSessionDeleteResponse> => {
+      if (!req || typeof req.sessionId !== 'number') {
+        throw new Error('Invalid agent:sessionDelete request: sessionId required')
+      }
+      const db = await getDb()
+      return { success: deleteSession(db, req.sessionId) }
+    }
+  )
+
+  // ===== 页面智能体：大模型自动控制当前打开的网页 =====
+  let pageAgentAbort: AbortController | null = null
+
+  ipcMain.handle(
+    IPC_CHANNELS.PAGE_AGENT_START,
+    async (_event, req: PageAgentStartRequest): Promise<PageAgentStartResponse> => {
+      if (!req || typeof req.goal !== 'string' || !req.goal.trim()) {
+        throw new Error('请提供操作目标（例如：在搜索框输入贵州茅台并搜索）')
+      }
+      const wc = getMgr().getTabManager().getWebContents(req.tabId)
+      if (!wc || wc.isDestroyed()) {
+        throw new Error('当前没有可控制的页面，请先打开一个标签页')
+      }
+      const llm = makeLlmClient()
+      // 先停掉上一次未结束的运行
+      pageAgentAbort?.abort()
+      const ac = new AbortController()
+      pageAgentAbort = ac
+      const sender = _event.sender
+      // 后台跑闭环，不阻塞本次响应
+      runPageAgent({
+        webContents: wc,
+        llm,
+        goal: req.goal.trim(),
+        maxSteps: req.maxSteps ?? 10,
+        signal: ac.signal,
+        onEvent: (e: PageAgentEvent) => {
+          if (sender && !sender.isDestroyed()) {
+            sender.send(IPC_CHANNELS.PAGE_AGENT_EVENT, e)
+          }
+        },
+      }).catch((err) => {
+        if (sender && !sender.isDestroyed()) {
+          sender.send(IPC_CHANNELS.PAGE_AGENT_EVENT, {
+            type: 'error',
+            message: err instanceof Error ? err.message : String(err),
+          })
+        }
+      })
+      return { started: true }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PAGE_AGENT_STOP,
+    async (_event, _req: PageAgentStopRequest): Promise<PageAgentStopResponse> => {
+      pageAgentAbort?.abort()
+      pageAgentAbort = null
+      return { stopped: true }
+    }
+  )
+
+  // ===== AI 桌宠 =====
+
+  ipcMain.handle(
+    IPC_CHANNELS.PET_TOGGLE,
+    (_event, req: PetToggleRequest): PetToggleResponse => {
+      return { visible: togglePetWindow(req?.visible) }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PET_SET_SIZE,
+    (_event, req: PetSetSizeRequest): PetSetSizeResponse => {
+      if (!req || typeof req.width !== 'number' || typeof req.height !== 'number') {
+        throw new Error('Invalid pet:setSize request: width/height required')
+      }
+      return { ok: setPetSize(req.width, req.height) }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PET_GET_CONFIG,
+    (_event, _req: PetGetConfigRequest): PetGetConfigResponse => {
+      const pet = getConfig().pet
+      return { config: { name: pet.name, systemPrompt: pet.systemPrompt } }
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.PET_SET_CONFIG,
+    (_event, req: PetSetConfigRequest): PetSetConfigResponse => {
+      const current = getConfig().pet
+      const systemPrompt = req?.restoreDefault
+        ? DEFAULT_PET_SYSTEM_PROMPT
+        : typeof req?.systemPrompt === 'string'
+          ? req.systemPrompt
+          : current.systemPrompt
+      const next = {
+        name: typeof req?.name === 'string' && req.name.trim() ? req.name.trim() : current.name,
+        systemPrompt,
+      }
+      updateConfig({ pet: next })
+      return { config: next }
+    }
+  )
+
+  /**
+   * 让桌宠弹提示气泡（行情监控 / 策略信号等场景由主进程调用）
+   * 这个是「主进程 → 桌宠」的推送，不需要 ipcMain.handle。
+   */
+  function notifyPet(payload: PetNotifyPayload): void {
+    const w = getPetWindow()
+    if (w && !w.isDestroyed()) {
+      w.webContents.send(IPC_CHANNELS.PET_NOTIFY, payload)
+    }
+  }
+  // 暴露给同模块的其它处理器（如策略信号转发）使用
+  ;(globalThis as unknown as { __notifyPet?: typeof notifyPet }).__notifyPet = notifyPet
 
   // ===== 研究报告 =====
   ipcMain.handle(
@@ -1906,7 +2629,7 @@ export function registerIpcHandlers(): void {
       if (!req || typeof req !== 'object') {
         throw new Error('Invalid ai:setConfig request')
       }
-      for (const key of ['baseUrl', 'apiKey', 'model'] as const) {
+      for (const key of ['baseUrl', 'apiKey', 'model', 'fastModel'] as const) {
         if (req[key] !== undefined && typeof req[key] !== 'string') {
           throw new Error(`Invalid ai:setConfig request: ${key} must be string`)
         }
@@ -1915,6 +2638,7 @@ export function registerIpcHandlers(): void {
         baseUrl: req.baseUrl,
         apiKey: req.apiKey,
         model: req.model,
+        fastModel: req.fastModel,
       })
       return { success: true }
     }

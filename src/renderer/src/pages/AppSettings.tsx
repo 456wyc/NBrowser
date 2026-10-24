@@ -3,6 +3,7 @@ import { IPC_CHANNELS, type TradingCalendarConfig } from '@shared/ipc'
 import { DEFAULT_SEARCH_TEMPLATE, SEARCH_ENGINE_PRESETS } from '@shared/url'
 import { setSearchEngineCache } from '../hooks/searchEngine'
 import { useToast } from '../hooks/useToast'
+import { QuoteSourceCard } from './QuoteSourceCard'
 
 function parseDomains(raw: string): string[] {
   return raw
@@ -23,6 +24,9 @@ export function AppSettingsPage() {
   const [nonTradingSec, setNonTradingSec] = useState('60')
   const [quoteSaving, setQuoteSaving] = useState(false)
 
+  // 启动时恢复上次的标签页与独立窗口
+  const [sessionRestore, setSessionRestore] = useState(true)
+
   // 交易日历
   const [calendar, setCalendar] = useState<TradingCalendarConfig>({ holidays: [], makeupWorkdays: [] })
   const [calendarDefault, setCalendarDefault] = useState<TradingCalendarConfig>({ holidays: [], makeupWorkdays: [] })
@@ -40,14 +44,16 @@ export function AppSettingsPage() {
   useEffect(() => {
     ;(async () => {
       try {
-        const [tracking, bl, cal, se, qi] = await Promise.all([
+        const [tracking, bl, cal, se, qi, sr] = await Promise.all([
           window.electronAPI.invoke(IPC_CHANNELS.SETTINGS_GET_TRACKING_ENABLED, {}),
           window.electronAPI.invoke(IPC_CHANNELS.SETTINGS_GET_BLACKLIST, {}),
           window.electronAPI.invoke(IPC_CHANNELS.SETTINGS_GET_TRADING_CALENDAR, {}),
           window.electronAPI.invoke(IPC_CHANNELS.SETTINGS_GET_SEARCH_ENGINE, {}),
           window.electronAPI.invoke(IPC_CHANNELS.SETTINGS_GET_QUOTE_INTERVAL, {}),
+          window.electronAPI.invoke(IPC_CHANNELS.SETTINGS_GET_SESSION_RESTORE, {}),
         ])
         setTrackingEnabled(tracking.enabled)
+        setSessionRestore(sr.enabled)
         setBlacklist(bl.domains)
         setDraft(bl.domains.join('\n'))
         setCalendar(cal.config)
@@ -78,6 +84,17 @@ export function AppSettingsPage() {
       })
       setTrackingEnabled(next)
       showToast(next ? '已开启轨迹记录' : '已关闭轨迹记录')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : '保存失败', false)
+    }
+  }
+
+  const toggleSessionRestore = async () => {
+    const next = !sessionRestore
+    try {
+      await window.electronAPI.invoke(IPC_CHANNELS.SETTINGS_SET_SESSION_RESTORE, { enabled: next })
+      setSessionRestore(next)
+      showToast(next ? '下次启动会恢复上次的标签页与独立窗口' : '下次启动只开一个导航页')
     } catch (err) {
       showToast(err instanceof Error ? err.message : '保存失败', false)
     }
@@ -226,6 +243,23 @@ export function AppSettingsPage() {
         </div>
       </div>
 
+      {/* 启动恢复 */}
+      <div style={styles.card}>
+        <div style={styles.row}>
+          <div style={styles.rowText}>
+            <div style={styles.rowTitle}>启动时恢复上次会话</div>
+            <div style={styles.rowDesc}>
+              重开应用时自动还原上次打开的标签页，以及弹出的每个独立窗口（含它摆在哪块屏幕上）。
+              页面内的滚动位置、未提交的表单不恢复
+            </div>
+          </div>
+          <label className="switch" title={sessionRestore ? '点击关闭' : '点击开启'}>
+            <input type="checkbox" checked={sessionRestore} onChange={() => toggleSessionRestore()} />
+            <span className="switch-track" />
+          </label>
+        </div>
+      </div>
+
       {/* 默认搜索引擎 */}
       <div style={styles.card}>
         <div style={styles.rowTitle}>默认搜索引擎</div>
@@ -264,6 +298,9 @@ export function AppSettingsPage() {
           </button>
         </div>
       </div>
+
+      {/* 行情数据源 */}
+      <QuoteSourceCard />
 
       {/* 行情轮询频率 */}
       <div style={styles.card}>

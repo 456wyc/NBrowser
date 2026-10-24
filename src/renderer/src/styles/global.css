@@ -149,6 +149,30 @@ code {
   color: var(--red);
 }
 
+/* 主窗口自绘顶栏的「标签 / 助手 / 视图 / 帮助」菜单按钮（替代被隐藏的原生菜单栏） */
+.app-menubar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.app-menubar-btn {
+  background: transparent;
+  border: none;
+  color: var(--subtext0);
+  font-size: 13px;
+  padding: 4px 9px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.app-menubar-btn:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+
 /* ---------- 行 hover ---------- */
 .hover-row {
   display: flex;

@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { defaultCapabilities, type AgentCapabilitiesConfig } from '@shared/agent-capabilities'
+import type { CustomQuoteConfig } from './quote/custom-http-provider'
 
 /**
  * 应用配置（存本地 JSON 文件，不入库、不提交 git）
@@ -13,22 +14,44 @@ export interface AppConfig {
     baseUrl: string
     apiKey: string
     model: string
+    /**
+     * 轻量模型（模型路由用）：留空 = 不启用路由，所有请求都走主模型。
+     * 启用后，AI 助手的简单问答（无需工具）由它直答，数据查询/研究仍走主模型。
+     * 复用同一 baseUrl/apiKey（同一厂商的便宜型号，如 gpt-4o-mini / deepseek-chat / qwen-turbo）。
+     */
+    fastModel: string
   }
   // 行情配置
   quote: {
+    /** 数据源：eastmoney（默认，免费稳定）/ tencent（免费备用）/ custom（自定义 HTTP API） */
     provider: string
     tradingIntervalMs: number
     nonTradingIntervalMs: number
+    /** 自定义数据源配置（provider=custom 时生效） */
+    custom?: CustomQuoteConfig
   }
   // Agent 能力配置（工具 / Skills / MCP）
   agent: AgentCapabilitiesConfig
+  // AI 桌宠（牛来）：名字与系统提示词（人设）
+  pet: {
+    /** 桌宠名字，会显示在聊天面板标题，并作为身份注入对话 */
+    name: string
+    /** 系统提示词：性格、说话风格等；留空则用内置默认人设 */
+    systemPrompt: string
+  }
 }
+
+/** 桌宠默认人设（用户没填 systemPrompt 时用这段） */
+export const DEFAULT_PET_SYSTEM_PROMPT =
+  '你是牛Browser 的桌面小跟班，简短、直接、靠谱，偶尔俏皮。' +
+  '被问到「你是谁」「你叫什么名字」时，要清楚地报出自己的名字。'
 
 const DEFAULT_CONFIG: AppConfig = {
   llm: {
     baseUrl: 'https://api.openai.com/v1',
     apiKey: '',
     model: 'gpt-4o-mini',
+    fastModel: '',
   },
   quote: {
     provider: 'eastmoney',
@@ -36,6 +59,10 @@ const DEFAULT_CONFIG: AppConfig = {
     nonTradingIntervalMs: 60000,
   },
   agent: defaultCapabilities(),
+  pet: {
+    name: '牛来',
+    systemPrompt: DEFAULT_PET_SYSTEM_PROMPT,
+  },
 }
 
 let cachedConfig: AppConfig | null = null

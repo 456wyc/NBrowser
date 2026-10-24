@@ -47,7 +47,7 @@ export function LayoutToolbar({
           />
         </svg>
       </ToolBtn>
-      <ToolBtn active={panelOn} title="显示/隐藏 辅助侧栏（分析 / 研究 / 报告 / 复盘）" onClick={onTogglePanel}>
+      <ToolBtn active={panelOn} title="显示/隐藏 辅助侧栏（研究 / 策略 / 复盘 / 回放）" onClick={onTogglePanel}>
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
           {/* 左侧大区描边（网页区）+ 右竖条实心（辅助侧栏） */}
           <rect

@@ -2,6 +2,8 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import { NavHome } from './pages/NavHome'
+import { PopoutShell } from './pages/PopoutShell'
+import { PetApp } from './pages/PetApp'
 import './styles/global.css'
 
 /**
@@ -41,9 +43,14 @@ function PreloadError() {
  * - 默认：渲染完整浏览器外壳（App）
  * - #/nav：只渲染导航首页（NavHome），用于「新标签页」的内容区。
  *   这样标签里不会再递归渲染一整套侧边栏 / 标签栏外壳。
+ * - #/popout?tab=<id>：只渲染独立窗口外壳（PopoutShell），
+ *   一条地址栏 + 网页区占位，真正的网页由主进程挂到这个 OS 窗口上。
+ * - #/pet：AI 桌宠浮窗（透明无边框小窗口，只有吉祥物 + 聊天面板）。
  */
 function pickRoot() {
   if (!window.electronAPI) return <PreloadError />
+  if (location.hash.startsWith('#/popout')) return <PopoutShell />
+  if (location.hash.startsWith('#/pet')) return <PetApp />
   return location.hash.startsWith('#/nav') ? <NavHome /> : <App />
 }
 

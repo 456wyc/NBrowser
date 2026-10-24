@@ -1,6 +1,7 @@
 import { net } from 'electron'
 import { normalizeSymbol } from '@shared/stock-market'
 import type { QuoteProvider, Quote, SearchResult, KLine, KLinePeriod } from './provider'
+import { searchSymbolsEastmoney } from './search-symbols'
 
 /**
  * 东方财富行情 Provider
@@ -52,38 +53,8 @@ export class EastmoneyProvider implements QuoteProvider {
   }
 
   async searchSymbol(keyword: string): Promise<SearchResult[]> {
-    if (!keyword.trim()) return []
-
-    const url =
-      'https://searchapi.eastmoney.com/api/suggest/get' +
-      `?input=${encodeURIComponent(keyword)}` +
-      '&type=14&token=D43BF722C8E33BDC906FB84D85E326E8&count=10'
-
-    try {
-      const response = await net.fetch(url, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          Referer: 'https://www.eastmoney.com/',
-        },
-      })
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
-      }
-
-      const data: EastmoneySearchResponse = await response.json()
-      if (!data?.QuotationCodeTable?.Data) return []
-
-      return data.QuotationCodeTable.Data.map((item) => ({
-        symbol: toStandardCode(item.Code, item.MktNum),
-        name: item.Name,
-        market: marketNumToMarket(item.MktNum),
-      })).filter((item) => item.symbol) as SearchResult[]
-    } catch (err) {
-      console.error(`[quote] eastmoney searchSymbol failed: ${err}`)
-      throw err
-    }
+    // 搜索与行情源解耦，统一走东财 suggest（见 search-symbols.ts）
+    return searchSymbolsEastmoney(keyword)
   }
 
   async getKLine(code: string, period: KLinePeriod = 'day', limit = 250): Promise<KLine[]> {
@@ -163,29 +134,6 @@ function toEastmoneyCode(code: string): string | null {
 }
 
 /**
- * 东方财富代码 -> 内部标准代码
- */
-function toStandardCode(code: string, mktNum: number): string {
-  const market = marketNumToMarket(mktNum)
-  return `${code}.${market}`
-}
-
-function marketNumToMarket(mktNum: number): string {
-  // 东方财富市场代码：沪A=1, 深A=0, 北交所=3
-  switch (mktNum) {
-    case 1:
-      return 'SH'
-    case 0:
-    case 2:
-      return 'SZ'
-    case 3:
-      return 'BJ'
-    default:
-      return 'SH'
-  }
-}
-
-/**
  * 解析东方财富行情数据项
  * f2: 最新价, f3: 涨跌幅, f4: 涨跌额, f5: 成交量(手), f6: 成交额
  * f12: 代码, f14: 名称, f15: 最高, f16: 最低, f17: 开盘, f18: 昨收
@@ -257,15 +205,5 @@ interface EastmoneyKlineResponse {
   data?: {
     /** 每行：日期,开,收,高,低,成交量,成交额,... */
     klines?: string[]
-  }
-}
-
-interface EastmoneySearchResponse {
-  QuotationCodeTable?: {
-    Data: Array<{
-      Code: string
-      Name: string
-      MktNum: number
-    }>
   }
 }
