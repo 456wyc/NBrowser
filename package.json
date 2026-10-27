@@ -1,5 +1,5 @@
 {
-  "name": "stock-agent-browser",
+  "name": "nbrowser",
   "version": "0.1.0",
   "description": "牛Browser - 面向个人投资者的桌面端浏览器",
   "main": "out/main/index.js",
@@ -15,7 +15,7 @@
     ]
   },
   "build": {
-    "appId": "com.niubrowser.app",
+    "appId": "com.nbrowser.app",
     "productName": "牛Browser",
     "directories": {
       "output": "release"

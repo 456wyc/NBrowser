@@ -200,7 +200,7 @@ export class CustomHttpProvider implements QuoteProvider {
 
   private headers(): Record<string, string> {
     return {
-      'User-Agent': 'stock-agent-browser',
+      'User-Agent': 'NBrowser',
       ...(this.config.headers || {}),
     }
   }
