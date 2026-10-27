@@ -7,13 +7,6 @@
   "license": "MIT",
   "private": true,
   "packageManager": "pnpm@12.14.0",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron-winstaller",
-      "onnxruntime-node",
-      "protobufjs"
-    ]
-  },
   "build": {
     "appId": "com.nbrowser.app",
     "productName": "牛Browser",
