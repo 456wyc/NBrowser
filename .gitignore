@@ -39,6 +39,10 @@ config.local.json
 # Test
 coverage/
 
+# VitePress site
+site/.vitepress/dist/
+site/.vitepress/cache/
+
 # Temp
 tmp/
 temp/

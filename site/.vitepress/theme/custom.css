@@ -1,0 +1,30 @@
+.shot {
+  margin: 28px 0;
+}
+
+.shot img {
+  display: block;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--vp-c-border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+
+.shot .cap {
+  margin: 10px 0 0;
+  text-align: center;
+  font-size: 14px;
+  color: var(--vp-c-text-2);
+}
+
+.shot-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+}
+
+.shot-grid > .shot {
+  flex: 1 1 420px;
+  min-width: 280px;
+  margin: 0;
+}
