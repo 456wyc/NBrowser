@@ -36,6 +36,10 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+        env:
+          # 与 build.yml 保持一致，避免 Electron / electron-builder 二进制下载卡住
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://registry.npmmirror.com/-/binary/electron-builder-binaries/
 
       - name: Build site
         run: pnpm docs:build
