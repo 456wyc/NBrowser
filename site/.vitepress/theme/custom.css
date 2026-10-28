@@ -52,6 +52,27 @@ html {
   height: auto;
   filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.16));
 }
+
+/* K 线装饰背景：红涨绿跌，低透明度，顶部渐隐，置于内容之下 */
+.hero-kline {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 80%;
+  opacity: 0.2;
+  pointer-events: none;
+  z-index: 0;
+  -webkit-mask-image: linear-gradient(to top, #000 45%, transparent 100%);
+  mask-image: linear-gradient(to top, #000 45%, transparent 100%);
+}
+.hero-logo,
+.hero-tag,
+.hero-actions,
+.hero-badges {
+  position: relative;
+  z-index: 1;
+}
 .hero-tag {
   font-size: 19px;
   line-height: 1.7;

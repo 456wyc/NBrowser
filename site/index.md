@@ -6,6 +6,7 @@ title: 牛Browser · 面向个人投资者的桌面浏览器
 <div class="home-wrap">
 
 <section class="hero">
+  <img class="hero-kline" src="/kline.svg" alt="" aria-hidden="true" />
   <img class="hero-logo" src="/logo.svg" alt="牛Browser" />
   <p class="hero-tag">面向个人投资者的桌面浏览器<br /><strong>看盘 · 研究 · 复盘</strong>，一个窗口搞定</p>
   <div class="hero-actions">
@@ -64,7 +65,7 @@ title: 牛Browser · 面向个人投资者的桌面浏览器
 
   <div class="shot-frame shot-lg">
     <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="url">盯盘空间 · 东方财富自选股</span></div>
-    <a href="/snapshots/image.png" target="_blank" rel="noopener"><img src="/snapshots/image.png" alt="盯盘空间与自选股行情" /></a>
+    <a href="snapshots/image.png" target="_blank" rel="noopener"><img src="/snapshots/image.png" alt="盯盘空间与自选股行情" /></a>
   </div>
   <p class="shot-cap">盯盘空间：行情页 + 侧边栏常驻自选股（涨红跌绿）</p>
 
@@ -72,28 +73,28 @@ title: 牛Browser · 面向个人投资者的桌面浏览器
     <div class="shot-item">
       <div class="shot-frame">
         <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="url">研究 · AI 信息整理</span></div>
-        <a href="/snapshots/image0.png" target="_blank" rel="noopener"><img src="/snapshots/image0.png" alt="AI 信息整理" /></a>
+        <a href="snapshots/image0.png" target="_blank" rel="noopener"><img src="/snapshots/image0.png" alt="AI 信息整理" /></a>
       </div>
       <p class="shot-cap">🔍 研究：AI 输出利好 / 利空要点与关键数据</p>
     </div>
     <div class="shot-item">
       <div class="shot-frame">
         <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="url">笔记 · AI 讨论</span></div>
-        <a href="/snapshots/image3.png" target="_blank" rel="noopener"><img src="/snapshots/image3.png" alt="笔记与 AI 讨论" /></a>
+        <a href="snapshots/image3.png" target="_blank" rel="noopener"><img src="/snapshots/image3.png" alt="笔记与 AI 讨论" /></a>
       </div>
       <p class="shot-cap">📒 笔记：Markdown 编辑 + 随笔记 AI 讨论</p>
     </div>
     <div class="shot-item">
       <div class="shot-frame">
         <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="url">导航首页 · 常用网站</span></div>
-        <a href="/snapshots/image1.png" target="_blank" rel="noopener"><img src="/snapshots/image1.png" alt="导航首页常用网站" /></a>
+        <a href="snapshots/image1.png" target="_blank" rel="noopener"><img src="/snapshots/image1.png" alt="导航首页常用网站" /></a>
       </div>
       <p class="shot-cap">🏠 导航首页：分类常用网站，可自定义分组</p>
     </div>
     <div class="shot-item">
       <div class="shot-frame">
         <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="url">自选股 · 卡片管理</span></div>
-        <a href="/snapshots/image2.png" target="_blank" rel="noopener"><img src="/snapshots/image2.png" alt="自选股卡片" /></a>
+        <a href="snapshots/image2.png" target="_blank" rel="noopener"><img src="/snapshots/image2.png" alt="自选股卡片" /></a>
       </div>
       <p class="shot-cap">📈 自选股：卡片网格管理，实时行情联动</p>
     </div>
